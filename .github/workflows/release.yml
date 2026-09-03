@@ -65,6 +65,11 @@ jobs:
       - name: Check the built package imports and is complete
         run: npm run check-surface
 
+      # The version in package.json is whatever the last release left there, and
+      # this step is the only thing that moves it. A pull request that bumps it
+      # by hand does not get that version published — `npm version minor` reads
+      # the bumped number and goes one further, so the intended one is skipped
+      # and never exists on npm. That happened once, between 0.1.0 and 0.2.0.
       - name: Set the version
         id: version
         run: |
