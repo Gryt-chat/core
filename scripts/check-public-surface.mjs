@@ -28,6 +28,21 @@ const REQUIRED = [
   "getLinkProvider",
   "getProviderDetail",
   "hostnameOf",
+  // profile
+  "NAME_POOL",
+  "pickRandomName",
+  // permissions
+  "CUSTOM_VALUE",
+  "EVERYONE_VALUE",
+  "cellState",
+  "describeRules",
+  "indexRules",
+  "nextCellState",
+  "scopeChoiceFromValue",
+  "scopeChoiceValue",
+  "scopeOptions",
+  "scopeSetPayload",
+  "withCell",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -38,6 +53,10 @@ const REQUIRED_TYPES = [
   "LinkProvider",
   "Report",
   "ReportType",
+  "CellState",
+  "ChannelRule",
+  "RuleEffect",
+  "ScopeChoice",
 ];
 
 const dist = resolve("dist/index.js");
