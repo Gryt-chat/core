@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run typecheck
+      # node --test with type stripping, so there is no runner to install and
+      # no config to drift from the two apps' own.
+      - run: npm test
+      - run: npm run build
+      # The build has to have happened: this imports dist and checks that every
+      # name the apps rely on is actually there, and that nothing has appeared
+      # that was never agreed to be shared.
+      - run: npm run check-surface
+      - run: npx publint
+      - run: npx @arethetypeswrong/cli --pack .
