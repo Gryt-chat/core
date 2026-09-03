@@ -24,4 +24,10 @@ jobs:
       # that was never agreed to be shared.
       - run: npm run check-surface
       - run: npx publint
-      - run: npx @arethetypeswrong/cli --pack .
+      # The esm-only profile, because that is what this package is. Under the
+      # default "strict" profile attw fails on CJSResolvesToESM: a `require()`
+      # of an ESM-only package needs a dynamic import, which is true and is not
+      # a problem here. Both apps bundle (Vite and Metro) and @gryt/voice is
+      # ESM-only too. The profile says so out loud rather than muting the rule
+      # and leaving the next person to work out why.
+      - run: npx @arethetypeswrong/cli --pack . --profile esm-only
