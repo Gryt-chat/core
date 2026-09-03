@@ -1,0 +1,31 @@
+{
+  // No "DOM" in lib, and that is the whole point of this file.
+  //
+  // Everything here has to compile for a browser, an Electron renderer and
+  // Hermes alike, and the cheapest way to enforce that is to make `document`,
+  // `window` and `localStorage` fail to typecheck. A module that needs one of
+  // them is not shared logic yet: it wants the platform bit passed in.
+  //
+  // `@gryt/voice` splits web and native behind two entry points because a media
+  // engine genuinely cannot avoid the platform. This package has no such entry
+  // on purpose. If one becomes necessary, that is a decision to make out loud
+  // rather than by adding "DOM" here.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "skipLibCheck": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}
