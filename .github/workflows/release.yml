@@ -1,0 +1,98 @@
+name: Release
+
+# Dispatched, not automatic. Same call @gryt/voice makes and for the same
+# reasons: no changesets, one maintainer, and two consumers that pin a version
+# deliberately. You pick it when you mean it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'npm version argument: patch, minor, major, or an exact version like 0.1.0'
+        required: true
+        default: patch
+      tag:
+        description: 'npm dist-tag'
+        required: true
+        default: latest
+        type: choice
+        options: [latest, beta, next]
+
+# Two dispatches at once put @gryt/voice's 0.1.0-beta.6 on npm with no commit
+# behind it: both published, and the slower one then failed to push because the
+# faster had already moved main. Releases queue instead of racing, and are never
+# cancelled, because cancelling one mid-publish is worse than waiting.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  # Trusted publishing. There is no NPM_TOKEN in this repo and there should not
+  # be one — npm mints a short-lived credential from this token instead.
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # OIDC publishing needs npm 11.5.1 or newer, which is ahead of what the
+      # Node 24 image ships.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
+
+      # Against the real dist, before anything is published. @gryt/voice shipped
+      # twice with exports the client needed missing, each time found by
+      # installing the package and waiting for tsc. This is that check, and here
+      # it also fails on an export that appeared without being listed, since a
+      # name only one app uses is the two apps drifting apart again.
+      - name: Check the built package imports and is complete
+        run: npm run check-surface
+
+      - name: Set the version
+        id: version
+        run: |
+          npm version "${{ inputs.version }}" --no-git-tag-version
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        run: npm publish --provenance --access public --tag "${{ inputs.tag }}"
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release: v${{ steps.version.outputs.version }} [skip ci]"
+
+          # Annotated, because --follow-tags ignores lightweight tags. The voice
+          # workflow tagged every release from 0.1.0-beta.1 onwards and pushed
+          # none of them, silently, because of that one flag.
+          git tag -a "v${{ steps.version.outputs.version }}" \
+            -m "v${{ steps.version.outputs.version }}"
+
+          # The publish above cannot be undone, so this must not fail on a busy
+          # main. Rebase onto whatever landed while the build ran.
+          git pull --rebase origin main
+          git push origin HEAD:main --follow-tags
+
+      - name: Summary
+        run: |
+          echo "Published @gryt/core@${{ steps.version.outputs.version }} to the ${{ inputs.tag }} tag." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Both apps pin this package. They should move together." >> "$GITHUB_STEP_SUMMARY"
