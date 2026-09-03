@@ -41,6 +41,12 @@ goes missing **and** when one appears that nobody listed.
 - **`links`** — which site a URL belongs to, what colour to draw its card, what
   line to read out of its path, and which of four shapes a preview earns. 73
   sites, seven of which also read a detail from the path.
+- **`profile`** — the pool of placeholder names a person gets before they pick
+  one. Both apps handed these out and both files said to keep the other in step
+  by hand.
+- **`permissions`** — the channel scope matrix: rules in, grid out, and back.
+  The two apps keyed their cell map differently, a NUL on the desktop and a
+  space on the phone, which is a key one of them could collide on.
 
 ## What deliberately isn't
 

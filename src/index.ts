@@ -39,3 +39,23 @@ export {
   type LinkCardLayout,
   type LinkPreviewData,
 } from "./links/preview.js";
+
+export { NAME_POOL, pickRandomName } from "./profile/randomName.js";
+
+export {
+  cellState,
+  CUSTOM_VALUE,
+  describeRules,
+  EVERYONE_VALUE,
+  indexRules,
+  nextCellState,
+  scopeChoiceFromValue,
+  scopeChoiceValue,
+  scopeOptions,
+  scopeSetPayload,
+  withCell,
+  type CellState,
+  type ChannelRule,
+  type RuleEffect,
+  type ScopeChoice,
+} from "./permissions/channelRules.js";
