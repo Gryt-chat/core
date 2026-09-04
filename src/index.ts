@@ -41,6 +41,11 @@ export {
 } from "./links/preview.js";
 
 export {
+  conversationTitle,
+  type DirectConversation,
+} from "./conversations/title.js";
+
+export {
   normalizeCode,
   normalizeHost,
   parseServerInput,
