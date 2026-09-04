@@ -1,8 +1,10 @@
 /* Not the list of sites that work — any site with OpenGraph gets a full card
    without being here. Being here buys a real logo and a brand colour.
 
-   The logos are not here: they are React components on the desktop and SVG
-   paths on the phone, and this package must compile without a DOM. */
+   The logos are in logos.ts, as path data rather than components, because that
+   is the part both apps can share without this package touching a DOM. They
+   used to be react-icons components in the desktop client and nothing at all
+   on the phone. */
 
 export interface LinkProvider {
   id: string;
