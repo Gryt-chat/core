@@ -1,6 +1,6 @@
 {
   "name": "@gryt/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Gryt's shared application logic: one implementation of the things the desktop and mobile apps both do.",
   "license": "AGPL-3.0-only",
   "repository": {
