@@ -85,15 +85,23 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "release: v${{ steps.version.outputs.version }} [skip ci]"
 
+          # The publish above cannot be undone, so this must not fail on a busy
+          # main. Rebase onto whatever landed while the build ran.
+          git pull --rebase origin main
+
+          # After the rebase, not before. A rebase rewrites the commit this tag
+          # would have been on, and --follow-tags only pushes tags reachable
+          # from what it is pushing — so a tag made first is left on the
+          # abandoned commit and silently not pushed. That is how v0.1.0 and
+          # v0.5.0 ended up with no tag while 0.2.0 to 0.4.0 have one: it only
+          # happens when something else lands on main during the build.
+          #
           # Annotated, because --follow-tags ignores lightweight tags. The voice
           # workflow tagged every release from 0.1.0-beta.1 onwards and pushed
           # none of them, silently, because of that one flag.
           git tag -a "v${{ steps.version.outputs.version }}" \
             -m "v${{ steps.version.outputs.version }}"
 
-          # The publish above cannot be undone, so this must not fail on a busy
-          # main. Rebase onto whatever landed while the build ran.
-          git pull --rebase origin main
           git push origin HEAD:main --follow-tags
 
       - name: Summary
