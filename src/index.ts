@@ -67,3 +67,12 @@ export {
   type RuleEffect,
   type ScopeChoice,
 } from "./permissions/channelRules.js";
+
+export {
+  groupMembersByRole,
+  OFFLINE_GROUP_KEY,
+  UNGROUPED_GROUP_KEY,
+  type GroupableMember,
+  type GroupableRole,
+  type MemberGroup,
+} from "./members/groups.js";

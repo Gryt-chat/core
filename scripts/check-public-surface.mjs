@@ -52,6 +52,10 @@ const REQUIRED = [
   "parseServerInput",
   // conversations
   "conversationTitle",
+  // members
+  "OFFLINE_GROUP_KEY",
+  "UNGROUPED_GROUP_KEY",
+  "groupMembersByRole",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -68,6 +72,9 @@ const REQUIRED_TYPES = [
   "ScopeChoice",
   "ServerInput",
   "DirectConversation",
+  "GroupableMember",
+  "GroupableRole",
+  "MemberGroup",
 ];
 
 const dist = resolve("dist/index.js");
