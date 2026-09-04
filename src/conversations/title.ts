@@ -1,15 +1,5 @@
-/**
- * What a direct conversation is called in a list.
- *
- * Both apps had this and they had drifted: the phone returns "Group" when an
- * unnamed group has no members to name, and the desktop returned an empty
- * string, because `[].join(" and ")` is "". A group whose members have not
- * arrived yet draws a blank row there.
- *
- * The phone's version is the one kept. This is the shape of drift GRYT-406
- * warned about — not two implementations disagreeing loudly, but one of them
- * quietly having a case the other never got.
- */
+/* "Group" when an unnamed group has nobody to name — `[].join(" and ")` is "",
+   which drew a blank row. */
 
 export interface ConversationParticipant {
   server_user_id: string;
