@@ -40,6 +40,13 @@ export {
   type LinkPreviewData,
 } from "./links/preview.js";
 
+export {
+  normalizeCode,
+  normalizeHost,
+  parseServerInput,
+  type ServerInput,
+} from "./servers/address.js";
+
 export { NAME_POOL, pickRandomName } from "./profile/randomName.js";
 
 export {
