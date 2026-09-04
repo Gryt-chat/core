@@ -69,6 +69,34 @@ function wikipediaDetail(url: URL): string | null {
   }
 }
 
+/**
+ * The model's name out of `/models/1642496-old-vikings-jewelry-box`.
+ *
+ * The number is the id their API takes and means nothing to a reader, so the
+ * slug behind it is what the line says. A link with the slug stripped —
+ * `/models/1642496`, which is what their own copy button produces — has
+ * nothing to add, and null leaves the card to its title rather than printing
+ * an id at somebody.
+ */
+function makerWorldDetail(url: URL): string | null {
+  const p = seg(url);
+  const at = p.indexOf("models");
+  const slug = at === -1 ? undefined : p[at + 1];
+  if (!slug) return null;
+  const name = slug.replace(/^\d+-?/, "").replace(/-/g, " ").trim();
+  return name || null;
+}
+
+/** Printables files the same way: `/model/1234-a-name`. */
+function printablesDetail(url: URL): string | null {
+  const p = seg(url);
+  const at = p.indexOf("model");
+  const slug = at === -1 ? undefined : p[at + 1];
+  if (!slug) return null;
+  const name = slug.replace(/^\d+-?/, "").replace(/-/g, " ").trim();
+  return name || null;
+}
+
 function steamDetail(url: URL): string | null {
   const p = seg(url);
   if (p[0] === "app" && p[2]) return decodeURIComponent(p[2]).replace(/_/g, " ");
@@ -157,6 +185,12 @@ export const LINK_PROVIDERS: LinkProvider[] = [
   { id: "googledrive", label: "Google Drive", brand: "#1A73E8", hosts: ["drive.google.com", "docs.google.com"] },
   { id: "googlemaps", label: "Google Maps", brand: "#34A853", hosts: ["maps.google.com", "maps.app.goo.gl"] },
   { id: "openstreetmap", label: "OpenStreetMap", brand: "#5A8B3E", hosts: ["openstreetmap.org"] },
+
+  /* Where a 3D print came from. MakerWorld wears Bambu Lab's mark and its
+     green: it is Bambu Lab's site and has no mark of its own. */
+  { id: "makerworld", label: "MakerWorld", brand: "#00AE42", hosts: ["makerworld.com"], detail: makerWorldDetail },
+  { id: "printables", label: "Printables", brand: "#FA6831", hosts: ["printables.com"], detail: printablesDetail },
+  { id: "thingiverse", label: "Thingiverse", brand: "#248BFB", hosts: ["thingiverse.com"] },
 ];
 
 const BY_HOST = new Map<string, LinkProvider>();
