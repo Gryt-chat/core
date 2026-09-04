@@ -47,6 +47,8 @@ const REQUIRED = [
   "normalizeCode",
   "normalizeHost",
   "parseServerInput",
+  // conversations
+  "conversationTitle",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -62,6 +64,7 @@ const REQUIRED_TYPES = [
   "RuleEffect",
   "ScopeChoice",
   "ServerInput",
+  "DirectConversation",
 ];
 
 const dist = resolve("dist/index.js");
