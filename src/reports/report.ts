@@ -1,29 +1,7 @@
-/**
- * The shape `Gryt-chat/reports` takes, and how an app fills it in.
- *
- * `POST /v1/reports`. Only `type` and `message` are required — everything else
- * is diagnostics, and the service is explicit that a field an app gets wrong is
- * truncated or dropped rather than a reason to reject: "a report lost to a
- * validation error is a bug nobody hears about."
- *
- * That cuts both ways, and it is why nothing here throws and nothing here is
- * required to succeed. A diagnostic an app cannot work out is left off rather
- * than sent as a guess, because a wrong Electron version in a bug report is
- * worse than no Electron version.
- *
- * ## Why this is one file and not two
- *
- * The desktop and the phone had a copy each, with the same seven exports and
- * different insides. Most of the difference was real: a renderer knows its
- * Chrome build, a phone knows whether it is an emulator, and neither should
- * send the other's fields empty. Some of it was not. `MESSAGE_MAX` was 8000 on
- * the desktop and 4000 on the phone, and nothing recorded a reason — the two
- * files even carried the same sentence about not cutting people off at a tweet.
- *
- * So `Diagnostics` below is the union of both, every field optional, and each
- * app fills what it can actually find out. A field neither app fills is dead
- * and can be seen to be dead, which is the other half of the point.
- */
+/* `POST /v1/reports`. Only `type` and `message` are required; the service
+   truncates or drops a bad field rather than rejecting the report. So nothing
+   here throws, and a diagnostic an app cannot work out is left off rather than
+   guessed — a wrong Electron version is worse than no Electron version. */
 
 export type ReportType = "bug" | "feedback";
 
@@ -222,18 +200,7 @@ function uptime(seconds: number | undefined): string | undefined {
   return `${Math.round(minutes / 60)} h`;
 }
 
-/**
- * `win32` on the wire, "Windows" on the screen.
- *
- * The service's enum is lowercase and the report keeps it that way. This is
- * only for the list somebody reads before sending, where a bare `darwin` or
- * "ios" next to a version number reads as a typo, and "Ios" would be worse
- * than either.
- *
- * Both apps had one of these knowing only its own platforms. One function
- * knowing all of them is the same size and stops a macOS build of the desktop
- * from printing "Macos".
- */
+/* Display only; the wire keeps the service's lowercase enum. */
 function platformLabel(platform: string): string {
   if (platform === "darwin" || platform === "macos") return "macOS";
   if (platform === "win32" || platform === "windows") return "Windows";
@@ -243,17 +210,8 @@ function platformLabel(platform: string): string {
   return platform.charAt(0).toUpperCase() + platform.slice(1);
 }
 
-/**
- * The same diagnostics, as lines to show somebody before they send.
- *
- * A form that quietly ships a route, a server version and a log tail is worse
- * than one that says so — and this is the list that makes "what is attached"
- * answerable without reading the source. It is built from the report rather
- * than from the inputs, so it cannot drift from what actually goes.
- *
- * Every row is conditional, so an app that fills half the fields shows half the
- * rows rather than a column of blanks.
- */
+/* Built from the report rather than the inputs, so it cannot drift from what
+   actually goes. Every row is conditional. */
 export function describeAttached(report: Report): { label: string; value: string }[] {
   const lines: { label: string; value: string }[] = [];
   const add = (label: string, value: string | undefined) => {

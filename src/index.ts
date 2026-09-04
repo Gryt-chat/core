@@ -1,16 +1,6 @@
-/**
- * Gryt's shared application logic.
- *
- * One implementation of the things the desktop and the phone both do. What
- * lives here is decided by a single test: could this file compile with no DOM
- * and no React Native, and would the two apps otherwise both need a copy? If
- * either answer is no, it belongs in the app.
- *
- * The barrel is flat and named rather than a set of subpath exports, because
- * the two apps import from it by name and `check-public-surface.mjs` asserts
- * that everything they import is actually here. Subpaths would need that guard
- * per path for no gain at this size.
- */
+/* What belongs here: it must compile with no DOM and no React Native, and both
+   apps must otherwise need a copy. The barrel is flat and named because
+   `check-public-surface.mjs` asserts against it. */
 
 export {
   buildReport,

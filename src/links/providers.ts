@@ -1,23 +1,8 @@
-/**
- * Which site a link belongs to, worked out from the URL alone.
- *
- * Knowing means a card can carry a site's identity before its metadata
- * arrives, and can still carry it when the metadata never does — a private
- * repository, a page behind Cloudflare, a site that blocks whatever fetches
- * previews. Those otherwise draw a bare hostname.
- *
- * This is deliberately not the list of sites that "work". Any site with
- * OpenGraph tags gets a full card without appearing here, and one that declares
- * a `theme-color` gets a coloured one. Being on this list buys a real logo
- * instead of a favicon, a brand colour that does not depend on the site
- * declaring one, and for a few of them a line read straight out of the path.
- *
- * The logos are not here. A brand icon is a React component on the desktop and
- * an SVG path or a favicon on the phone, and neither belongs in a package that
- * must compile without a DOM. Each app maps `id` to its own artwork; this file
- * owns the hostnames, the colours and the path rules, which is the part that
- * was drifting.
- */
+/* Not the list of sites that work — any site with OpenGraph gets a full card
+   without being here. Being here buys a real logo and a brand colour.
+
+   The logos are not here: they are React components on the desktop and SVG
+   paths on the phone, and this package must compile without a DOM. */
 
 export interface LinkProvider {
   id: string;

@@ -1,26 +1,9 @@
-/**
- * The rules on a channel scope, as a matrix and back again.
- *
- * Pure and on its own like `serverOrder.ts`, because everything that can go
- * wrong here is in the mapping between what the server stores and what the grid
- * shows, and that is worth exercising without React.
- *
- * The server stores one row per thing a scope changes. Inherit is the absence
- * of a row, so the matrix has three states per cell and only two of them are
- * ever written.
- *
- * ## The cell key
- *
- * `indexRules` builds one map keyed by role and permission together, and the
- * separator between them matters. The desktop used a NUL and the phone used a
- * space, which is two implementations of a key and one of them weaker: a role
- * id or a permission containing a space would collide. Neither does today, so
- * nothing was broken, but the two had drifted with nothing to notice it.
- *
- * NUL wins, because it cannot appear in either half. It is written as a `\u0000` escape
- * rather than as a raw byte — the desktop's copy held two literal NULs, which
- * made git treat the whole file as binary and stop showing diffs for it.
- */
+/* Inherit is the absence of a row, so a cell has three states and only two are
+   ever written.
+
+   `indexRules` keys on role and permission joined by NUL, because NUL cannot
+   appear in either half. Written as `\u0000` rather than a raw byte: literal
+   NULs make git treat the file as binary and stop showing diffs. */
 
 export type RuleEffect = "allow" | "deny";
 

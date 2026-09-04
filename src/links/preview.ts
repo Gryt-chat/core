@@ -1,11 +1,5 @@
-/**
- * What the server found out about a link, and what a card should do with it.
- *
- * The data comes from `GET /api/link-preview`; the shape is the server's, and
- * the decisions below are the ones both apps were making separately. Fetching
- * is not here — the desktop and the phone reach a server differently and neither
- * way belongs in a package with no platform.
- */
+/* Shape is the server's, from `GET /api/link-preview`. Fetching is not here:
+   the two apps reach a server differently. */
 
 export interface LinkPreviewData {
   url: string;

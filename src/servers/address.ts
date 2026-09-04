@@ -1,21 +1,5 @@
-/**
- * Reading whatever somebody pasted into the join field.
- *
- * Both apps had this, byte for byte: `normalizeHost`, `normalizeCode` and all
- * of `parseServerInput`, down to the comments. The phone said so in its own
- * header — a copy, because the desktop's `common` package was never published,
- * written down in GRYT-406 rather than left to be found once the two had
- * drifted.
- *
- * They had not drifted, which is the only comfortable moment to do this. The
- * two apps talk to the same servers, so an address one reads differently is a
- * server the other cannot join, and that failure looks like the server being
- * down rather than like a parser disagreeing.
- *
- * What stayed behind is the scheme memory — `schemeFor`, `rememberScheme` and
- * the rest. Those reach for storage and the two apps store differently, so they
- * fail the test at the top of this package.
- */
+/* Both apps read an address the same way or a server one can join is one the
+   other cannot. The scheme memory stays in the apps: it touches storage. */
 
 export function normalizeHost(input: string): string {
   let h = String(input || "").trim();
@@ -47,20 +31,10 @@ export interface ServerInput {
   code: string;
 }
 
-/**
- * Three shapes arrive and they are not the same thing: a full invite link
- * (`https://gryt.chat/invite?host=…&code=…`), a legacy one
- * (`https://app.gryt.chat/invite/<code>`), and a plain address (`gryt.chat`,
- * `192.168.1.5:5001`).
- *
- * `normalizeHost` on its own is wrong for the first two — it returns the
- * *link's* host, which is gryt.chat, and joining that instead of the server
- * named in the query is a confusing failure rather than an obvious one.
- *
- * Anything that does not parse as a link falls through to being an address, so
- * a typo in a URL still gets the address treatment rather than an error about
- * invite formats.
- */
+/* Three shapes: a full invite link, a legacy /invite/<code>, and a plain
+   address. `normalizeHost` alone is wrong for the first two — it returns the
+   link's host, so you would join gryt.chat instead of the server named in the
+   query. Anything that does not parse as a link falls through to an address. */
 export function parseServerInput(
   input: string,
   opts?: { defaultLegacyHost?: string },

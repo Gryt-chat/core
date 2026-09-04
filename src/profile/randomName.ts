@@ -1,22 +1,7 @@
-/**
- * A name for an install or a phone that has not been given one.
- *
- * The alternative was "Unknown" on the desktop and "You" on the phone, and it
- * was wrong twice over on both: a guest arrived on every server under the same
- * name, and the generated avatar is seeded on the name, so everybody who had
- * not set one shared a face. A random word fixes both — it is something to be
- * called, and it is different per install. GRYT-846.
- *
- * The list is deliberately dull. These names go in front of strangers on
- * somebody else's server, they are read aloud in voice chat, and whoever gets
- * one did not choose it — so nothing here should be a joke that lands badly, a
- * word that means something else somewhere, or anything a person would mind
- * being called for the ten seconds before they change it.
- *
- * Only nouns, only English, and nothing that reads as a real person's name.
- * A stranger arriving as "Marcus" looks like a claim about who they are;
- * "Bandit" looks like what it is, which is a placeholder.
- */
+/* Adding to this list: only nouns, only English, nothing that reads as a real
+   person's name. These go in front of strangers and are read aloud in voice,
+   and whoever gets one did not choose it. "Marcus" looks like a claim about
+   who somebody is; "Bandit" looks like the placeholder it is. */
 
 /**
  * Gems, metals, animals, weather, sky, and a few playful roles.
