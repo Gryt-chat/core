@@ -112,6 +112,37 @@ test("has no opinion about the rest of the web", () => {
   assert.equal(getLinkProvider("not a url"), null);
 });
 
+test("knows where a 3D print came from", () => {
+  assert.equal(getLinkProvider("https://makerworld.com/en/models/1642496-x")?.id, "makerworld");
+  assert.equal(getLinkProvider("https://www.printables.com/model/1234-x")?.id, "printables");
+  assert.equal(getLinkProvider("https://thingiverse.com/thing:1234")?.id, "thingiverse");
+});
+
+/*
+ * The number is the id their API takes and says nothing to a reader, so the
+ * slug behind it is the line. A share link with the slug stripped — which is
+ * what MakerWorld's own copy button produces — has nothing to add, and null
+ * leaves the card to its title rather than printing an id at somebody.
+ */
+test("reads a model's name out of the slug, and nothing out of a bare id", () => {
+  assert.equal(
+    getProviderDetail("https://makerworld.com/en/models/1642496-old-vikings-jewelry-box"),
+    "old vikings jewelry box",
+  );
+  assert.equal(
+    getProviderDetail("https://makerworld.com/en/models/1642496-x?appSharePlatform=copy#p-1"),
+    "x",
+  );
+  assert.equal(getProviderDetail("https://makerworld.com/en/models/1642496"), null);
+  assert.equal(getProviderDetail("https://makerworld.com/en/search?q=box"), null);
+
+  assert.equal(
+    getProviderDetail("https://www.printables.com/model/1234-a-nice-thing"),
+    "a nice thing",
+  );
+  assert.equal(getProviderDetail("https://www.printables.com/model/1234"), null);
+});
+
 test("reads the line a path carries", () => {
   assert.equal(getProviderDetail("https://github.com/Gryt-chat/gryt"), "Gryt-chat/gryt");
   assert.equal(
