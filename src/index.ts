@@ -22,6 +22,12 @@ export {
 } from "./links/providers.js";
 
 export {
+  getProviderLogo,
+  LINK_PROVIDER_LOGOS,
+  LOGO_VIEW_BOX,
+} from "./links/logos.js";
+
+export {
   describePreviewFailure,
   extractUrls,
   getCardSubtitle,

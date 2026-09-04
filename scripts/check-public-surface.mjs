@@ -20,6 +20,8 @@ const REQUIRED = [
   "describeAttached",
   // links
   "LINK_PROVIDERS",
+  "LINK_PROVIDER_LOGOS",
+  "LOGO_VIEW_BOX",
   "describePreviewFailure",
   "extractUrls",
   "getAccentColor",
@@ -27,6 +29,7 @@ const REQUIRED = [
   "getLinkCardLayout",
   "getLinkProvider",
   "getProviderDetail",
+  "getProviderLogo",
   "hostnameOf",
   // profile
   "NAME_POOL",
