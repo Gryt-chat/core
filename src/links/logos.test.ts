@@ -38,5 +38,16 @@ test("the providers the client draws today all have artwork", () => {
   // The desktop client rendered these as react-icons components before they
   // moved here. Losing one is a logo silently becoming a favicon, which is the
   // kind of regression nobody files.
-  assert.equal(Object.keys(LINK_PROVIDER_LOGOS).length, 73);
+  //
+  // 73 at the extraction, plus the three printing sites GRYT-913 added.
+  assert.equal(Object.keys(LINK_PROVIDER_LOGOS).length, 76);
+});
+
+test("the printing sites have both a provider and a mark", () => {
+  // The pair that made this worth a test: GRYT-913 added the providers in one
+  // change and the artwork in another, so for a release they had names, brand
+  // colours and a favicon where a logo should be.
+  for (const id of ["makerworld", "printables", "thingiverse"]) {
+    assert.ok(getProviderLogo(id), `${id} has no logo`);
+  }
 });
