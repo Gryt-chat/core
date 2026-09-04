@@ -43,6 +43,10 @@ const REQUIRED = [
   "scopeOptions",
   "scopeSetPayload",
   "withCell",
+  // servers
+  "normalizeCode",
+  "normalizeHost",
+  "parseServerInput",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -57,6 +61,7 @@ const REQUIRED_TYPES = [
   "ChannelRule",
   "RuleEffect",
   "ScopeChoice",
+  "ServerInput",
 ];
 
 const dist = resolve("dist/index.js");
