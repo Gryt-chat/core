@@ -119,10 +119,8 @@ test("knows where a 3D print came from", () => {
 });
 
 /*
- * The number is the id their API takes and says nothing to a reader, so the
- * slug behind it is the line. A share link with the slug stripped — which is
- * what MakerWorld's own copy button produces — has nothing to add, and null
- * leaves the card to its title rather than printing an id at somebody.
+ * The number is the id their API takes and says nothing to a reader, so the slug behind it
+ * is the line. A link with the slug stripped has nothing to add, so null.
  */
 test("reads a model's name out of the slug, and nothing out of a bare id", () => {
   assert.equal(

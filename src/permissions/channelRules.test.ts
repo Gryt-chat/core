@@ -32,12 +32,8 @@ test("a cell with no row inherits", () => {
 });
 
 test("the key separator cannot be forged out of the two halves", () => {
-  /* The desktop joined role and permission with a NUL and the phone with a
-     space, and the space is the weaker of the two: any id containing one lets a
-     different pair land on the same key. Nothing in Gryt has a space in either
-     half today, which is why the drift went unnoticed rather than being a bug.
-
-     These two pairs collide under a space and do not under a NUL. */
+  /* The desktop joined role and permission with a NUL and the phone with a space, and a
+     space is weaker: these two pairs collide under one and not under the other. */
   const spacey: ChannelRule[] = [
     { roleId: "role a", permission: "b", effect: "allow" },
     { roleId: "role", permission: "a b", effect: "deny" },

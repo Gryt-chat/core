@@ -1,32 +1,11 @@
 /**
- * The member list, cut into role groups.
- *
- * Both apps drew this and both got it right, separately, which is the shape of
- * duplicate that goes wrong quietly: nothing fails when the two drift, the
- * lists just stop matching, and a moderator has to re-learn the sidebar on
- * whichever device they are holding.
- *
- * **Offline leaves its role** — the question the list answers is "who is
- * around", so they go to one group at the end in one alphabet rather than to
- * the bottom of each role.
- *
- * Roles run highest rank first, and roles nobody holds are left out rather than
- * drawn empty. A member whose role the server did not describe lands in one
- * unnamed group after the named ones, which is also what a server too old to
- * send roles looks like.
+ * The member list, cut into role groups. Offline leaves its role and goes to one group at
+ * the end: the question the list answers is who is around.
  */
 
 /**
- * What this needs to know about a member, and no more.
- *
- * Structural rather than a type the apps have to adopt: the desktop's
- * `MemberInfo` and the phone's `Member` carry different fields for different
- * screens, and both already satisfy this.
- *
- * **A `status` this does not recognise counts as present, `undefined`
- * included.** The server always sends one — `clients.ts` defaults it to
- * `offline` — so the absent case is a server too old to have the field, and on
- * one of those every member reading as offline would blank the whole list.
+ * What this needs to know about a member, and no more, structurally. A `status` this does
+ * not recognise counts as present, `undefined` included — that is an old server.
  */
 export interface GroupableMember {
   nickname?: string | null;
@@ -43,12 +22,8 @@ export interface GroupableRole {
 }
 
 /**
- * One block of the member list: a heading and the people under it.
- *
- * Generic over the member so a caller gets its own type back and can draw
- * whatever it stores. `color` is the role's own colour, straight from the
- * server, or null for a role that has none and for the two groups that are not
- * roles.
+ * One block of the member list: a heading and the people under it. Generic over the member,
+ * so a caller gets its own type back. `color` is the role's own, or null.
  */
 export interface MemberGroup<M> {
   key: string;

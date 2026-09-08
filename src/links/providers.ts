@@ -1,10 +1,5 @@
-/* Not the list of sites that work — any site with OpenGraph gets a full card
-   without being here. Being here buys a real logo and a brand colour.
-
-   The logos are in logos.ts, as path data rather than components, because that
-   is the part both apps can share without this package touching a DOM. They
-   used to be react-icons components in the desktop client and nothing at all
-   on the phone. */
+/* Not the list of sites that work — any site with OpenGraph gets a full card. Being here
+   buys a real logo and a brand colour, and the logos are path data in logos.ts. */
 
 export interface LinkProvider {
   id: string;
@@ -70,13 +65,8 @@ function wikipediaDetail(url: URL): string | null {
 }
 
 /**
- * The model's name out of `/models/1642496-old-vikings-jewelry-box`.
- *
- * The number is the id their API takes and means nothing to a reader, so the
- * slug behind it is what the line says. A link with the slug stripped —
- * `/models/1642496`, which is what their own copy button produces — has
- * nothing to add, and null leaves the card to its title rather than printing
- * an id at somebody.
+ * The model's name out of `/models/1642496-old-vikings-jewelry-box`: the number is an id
+ * that says nothing, and a link with the slug stripped gets null rather than the id.
  */
 function makerWorldDetail(url: URL): string | null {
   const p = seg(url);
@@ -229,9 +219,8 @@ export function getProviderDetail(url: string): string | null {
 }
 
 /**
- * The accent a card is drawn with: the brand where we know it, the colour the
- * page declared where we do not, and null for the app's own accent when
- * neither is on offer.
+ * The accent a card is drawn with: the brand where we know it, the colour the page declared
+ * where we do not, and null for the app's own accent when neither is on offer.
  */
 export function getAccentColor(
   url: string,

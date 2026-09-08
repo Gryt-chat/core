@@ -1,14 +1,9 @@
-/* Adding to this list: only nouns, only English, nothing that reads as a real
-   person's name. These go in front of strangers and are read aloud in voice,
-   and whoever gets one did not choose it. "Marcus" looks like a claim about
-   who somebody is; "Bandit" looks like the placeholder it is. */
+/* Adding to this list: only nouns, only English, nothing that reads as a real person's name.
+   Whoever gets one did not choose it, and "Marcus" looks like a claim. */
 
 /**
- * Gems, metals, animals, weather, sky, and a few playful roles.
- *
- * Long enough that a room of thirty rarely doubles up, which is the whole
- * reason for the size — two people called Ruby in a member list is exactly the
- * confusion the old shared placeholder caused.
+ * Gems, metals, animals, weather, sky, and a few playful roles. Long enough that a room of
+ * thirty rarely doubles up, which is the whole reason for the size.
  */
 export const NAME_POOL = [
   // Gems and minerals
@@ -50,11 +45,8 @@ export const NAME_POOL = [
 ] as const;
 
 /**
- * One name from the pool.
- *
- * `Math.random` on purpose. This picks something to be called, not a secret —
- * the identity is a keypair, and the name has never been part of it. Reaching
- * for the crypto RNG here would suggest otherwise.
+ * One name from the pool. `Math.random` on purpose: this picks something to be called, not a
+ * secret, and the crypto RNG here would suggest otherwise.
  */
 export function pickRandomName(): string {
   return NAME_POOL[Math.floor(Math.random() * NAME_POOL.length)];

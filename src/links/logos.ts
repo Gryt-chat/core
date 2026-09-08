@@ -1,8 +1,5 @@
 /* The artwork for the providers in providers.ts, as raw SVG path data, so both apps draw it
-   with what they have. One path on a 24x24 canvas each, which logos.test.ts asserts.
-
-   The marks belong to the companies they identify. Being here is so Gryt can point at those
-   sites, not a claim on them. */
+   with what they have. The marks belong to the companies they identify. */
 
 /** Every logo below is drawn on this canvas. */
 export const LOGO_VIEW_BOX = "0 0 24 24";

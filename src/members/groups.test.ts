@@ -61,10 +61,8 @@ test("takes offline out of its role", () => {
 });
 
 test("an absent status is present, not offline", () => {
-  // The one place the two apps disagreed. The server always sends a status —
-  // `clients.ts` defaults it to `offline` — so nothing produces this except a
-  // server too old to have the field, and on one of those the phone's rule put
-  // every member into Offline and left the list looking empty.
+  // The one place the two apps disagreed. The server always sends a status, so only a server
+  // too old to have the field produces this — and the phone's rule put everybody in Offline.
   const noStatus: TestMember = { serverUserId: "u_nil", nickname: "Nil", role: "mod" };
   const groups = groupMembersByRole([noStatus], ROLES);
   assert.deepEqual(titles(groups), ["Moderator"]);
