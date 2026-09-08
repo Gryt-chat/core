@@ -119,22 +119,16 @@ function count(value: number | null | undefined): number | undefined {
 }
 
 /**
- * Assemble what gets sent.
- *
- * `type` and `message` always; every diagnostic only if it is actually known.
- * An empty `device` object says "this app does not collect device
- * information", which is a different and wronger claim than leaving it off.
+ * Assemble what gets sent: `type` and `message` always, and a diagnostic only if it is
+ * known. An empty `device` claims the app collects none, which is wronger than leaving it off.
  */
 export function buildReport(
   type: ReportType,
   input: { message: string; title?: string },
   diagnostics: Diagnostics = {},
 ): Report {
-  /* The embedded server is two fields on the wire rather than one, because
-   * "running its own server" and "which version that server is" answer
-   * different questions and the second is often the one that matters. Neither
-   * has a column on the service, so they go in `extra`, which is what it is
-   * for. Only the desktop can run one, and the phone simply never sets them. */
+  /* The embedded server is two fields on the wire, because "running one" and "which version"
+   * answer different questions. Neither has a column, so they go in `extra`. */
   const extra = some({
     embeddedServer: bool(diagnostics.embeddedServer),
     embeddedServerVersion: str(diagnostics.embeddedServerVersion),

@@ -15,6 +15,11 @@ jobs:
           node-version: 24
       - run: npm ci
       - run: npm run typecheck
+
+      # No comment runs past two lines. The script carries the list of paths still
+      # to be swept, and that list only ever shrinks.
+      - run: npm run test:comment-length
+
       # node --test with type stripping, so there is no runner to install and
       # no config to drift from the two apps' own.
       - run: npm test
