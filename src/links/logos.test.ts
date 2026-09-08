@@ -11,10 +11,8 @@ test("every logo names a provider that exists", () => {
   }
 });
 
-// Not the other way round on purpose. A provider without a logo falls back to
-// the site's favicon, so the gap is a design decision rather than a bug, and
-// requiring artwork for every provider would make adding one harder than it
-// needs to be.
+// Not the other way round on purpose: a provider without a logo falls back to the site's
+// favicon, so the gap is a design decision rather than a bug.
 
 test("every logo is a single path on the documented canvas", () => {
   assert.equal(LOGO_VIEW_BOX, "0 0 24 24");
@@ -22,9 +20,8 @@ test("every logo is a single path on the documented canvas", () => {
   for (const [id, d] of Object.entries(LINK_PROVIDER_LOGOS)) {
     assert.match(d, /^[Mm]/, `${id} does not start with a move command`);
 
-    // One path, so both apps can draw a logo without knowing how many elements
-    // it takes. The extraction asserted this too; this keeps it true after
-    // somebody edits the file by hand.
+    // One path, so both apps can draw a logo without knowing how many elements it takes.
+    // The extraction asserted this too; this keeps it true after a hand edit.
     assert.doesNotMatch(d, /["<>]/, `${id} looks like markup rather than path data`);
   }
 });
@@ -35,18 +32,14 @@ test("getProviderLogo answers for known and unknown ids", () => {
 });
 
 test("the providers the client draws today all have artwork", () => {
-  // The desktop client rendered these as react-icons components before they
-  // moved here. Losing one is a logo silently becoming a favicon, which is the
-  // kind of regression nobody files.
-  //
-  // 73 at the extraction, plus the three printing sites GRYT-913 added.
+  // The desktop client rendered these as react-icons components before they moved here.
+  // Losing one is a logo silently becoming a favicon. 73 at the extraction, plus three.
   assert.equal(Object.keys(LINK_PROVIDER_LOGOS).length, 76);
 });
 
 test("the printing sites have both a provider and a mark", () => {
-  // The pair that made this worth a test: GRYT-913 added the providers in one
-  // change and the artwork in another, so for a release they had names, brand
-  // colours and a favicon where a logo should be.
+  // The pair that made this worth a test: GRYT-913 added the providers in one change and
+  // the artwork in another, so for a release they had a favicon where a logo should be.
   for (const id of ["makerworld", "printables", "thingiverse"]) {
     assert.ok(getProviderLogo(id), `${id} has no logo`);
   }

@@ -1,18 +1,8 @@
-/* The artwork for the providers in providers.ts, as raw SVG path data.
+/* The artwork for the providers in providers.ts, as raw SVG path data, so both apps draw it
+   with what they have. One path on a 24x24 canvas each, which logos.test.ts asserts.
 
-   It used to live in the desktop client as react-icons components, which meant
-   the phone had no logos at all and the client carried an 82MB dependency to
-   draw 73 of them. Path data is not DOM, so it can sit here with the hostnames
-   and brand colours it belongs with, and each app draws it with whatever it
-   has: <path> in the browser, <Path> from react-native-svg on the phone.
-
-   Every one is a single path on a 24x24 canvas, which is Simple Icons' own
-   format and is asserted in logos.test.ts. A provider with no logo here falls
-   back to the site's favicon, so adding a provider without adding artwork
-   degrades rather than breaks.
-
-   The marks belong to the companies they identify. Being here is so Gryt can
-   point at those sites, not a claim on them. */
+   The marks belong to the companies they identify. Being here is so Gryt can point at those
+   sites, not a claim on them. */
 
 /** Every logo below is drawn on this canvas. */
 export const LOGO_VIEW_BOX = "0 0 24 24";

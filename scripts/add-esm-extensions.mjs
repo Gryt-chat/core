@@ -1,15 +1,5 @@
-// Appends .js to the relative specifiers tsc leaves alone.
-//
-// Node's ESM resolver requires the extension and refuses directory imports, and
-// tsc emits specifiers exactly as written. Writing them with .js in the source
-// is what NodeNext expects, but it puts a .js on every import in a TypeScript
-// codebase and reads as though it is importing built output.
-//
-// Bundling would also solve it — that is what @gryt/ui does — but this package
-// ships a web adapter and a React Native one. Metro picks between .native.ts
-// and .web.ts per file, and a bundle has no files left to pick between, so
-// bundling would foreclose the thing the package exists to do. So: unbundled
-// output, and the extensions added on the way out.
+// Appends .js to the relative specifiers tsc leaves alone. Bundling would also fix it and
+// cannot: Metro picks .native and .web variants per file, and a bundle has none left.
 import { readdir, readFile, writeFile, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
