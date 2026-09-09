@@ -4,13 +4,8 @@ import { describe, it } from "node:test";
 import { normalizeCode, normalizeHost, parseServerInput } from "./address.ts";
 
 /**
- * Ported from the phone, which was the only side that had them. The desktop
- * had the same three functions and no tests at all, so moving the code here
- * gives it the coverage it never had rather than merely relocating it.
- *
- * Converted from vitest to node:test, which is what this package runs. The
- * cases and the values are unchanged — a ported test that was quietly reworded
- * on the way is not the test that was passing before.
+ * Ported from the phone, which was the only side that had them; the desktop had the same
+ * three functions and none. The cases and the values are unchanged.
  */
 
 describe("normalizeHost", () => {
@@ -37,17 +32,14 @@ describe("normalizeCode", () => {
     assert.equal(normalizeCode("  AbC 123 "), "abc123");
   });
 
-  /* What comes back is what `inviteCodes.ts` stores and what the join sends.
-     The server lowercases and trims before it looks an invite up, so a code
-     that survives this unchanged is one it will actually match. */
+  /* What comes back is what `inviteCodes.ts` stores and what the join sends. The server
+     lowercases and trims before looking an invite up, so a survivor will match. */
   it("leaves a code that is already in the sent form alone", () => {
     assert.equal(normalizeCode("xytkjuwh8png"), "xytkjuwh8png");
   });
 
-  /* The server trims but does not squeeze, so it would refuse this one. Codes
-     get typed off a screen in groups, and the desktop client has always
-     accepted that — the two disagreeing about which codes work is worse than
-     being more forgiving than the server. */
+  /* The server trims but does not squeeze, so it would refuse this one. Codes get typed off
+     a screen in groups, and the two clients disagreeing is worse than being forgiving. */
   it("closes the gaps in a code somebody typed in groups", () => {
     assert.equal(normalizeCode("xytk juwh 8png"), "xytkjuwh8png");
   });

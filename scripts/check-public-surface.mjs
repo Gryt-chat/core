@@ -1,14 +1,5 @@
-// Asserts the package exports everything the two apps import from it.
-//
-// The same guard @gryt/voice carries, and for the same reason: two releases of
-// that package built, typechecked and published while missing exports the
-// client needed, and each was found by installing the package and waiting for
-// tsc to complain. That is a slow way to learn something a list can check.
-//
-// This one has a second job voice's does not. The point of the package is that
-// the desktop and the phone use one implementation, so an export dropping off
-// this list because only one app still imports it is the drift becoming
-// visible. Cut it deliberately, not by forgetting.
+// Asserts the package exports everything the two apps import from it, and nothing more: an
+// export dropping off because only one app still imports it is the drift becoming visible.
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 

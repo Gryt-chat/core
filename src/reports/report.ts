@@ -1,7 +1,5 @@
-/* `POST /v1/reports`. Only `type` and `message` are required; the service
-   truncates or drops a bad field rather than rejecting the report. So nothing
-   here throws, and a diagnostic an app cannot work out is left off rather than
-   guessed — a wrong Electron version is worse than no Electron version. */
+/* `POST /v1/reports`. Only `type` and `message` are required and the service truncates
+   rather than rejecting, so nothing throws and an unknown diagnostic is left off. */
 
 export type ReportType = "bug" | "feedback";
 
@@ -51,11 +49,8 @@ export interface Report {
 }
 
 /**
- * What an app knows about itself when somebody opens the form.
- *
- * Passed in rather than read here, so the assembly below stays readable and
- * testable: every one of these comes from somewhere that needs a running app —
- * the Electron bridge, `expo-constants`, `Platform`, the socket layer.
+ * What an app knows about itself when somebody opens the form. Passed in rather than read
+ * here: every one of these comes from somewhere that needs a running app.
  */
 export interface Diagnostics {
   version?: string | null;
@@ -90,12 +85,8 @@ export interface Diagnostics {
 }
 
 /**
- * The service truncates, but an app should not send a novel either.
- *
- * Generous rather than tight: somebody describing a bug properly is the good
- * case, and cutting them off at a tweet is how you get "it broke" instead. The
- * desktop's 8000 wins over the phone's 4000 on exactly that argument, which
- * both files made and only one of them followed.
+ * The service truncates, but an app should not send a novel either. Generous rather than
+ * tight: cutting somebody off at a tweet is how you get "it broke".
  */
 export const MESSAGE_MAX = 8000;
 export const TITLE_MAX = 120;
@@ -128,22 +119,16 @@ function count(value: number | null | undefined): number | undefined {
 }
 
 /**
- * Assemble what gets sent.
- *
- * `type` and `message` always; every diagnostic only if it is actually known.
- * An empty `device` object says "this app does not collect device
- * information", which is a different and wronger claim than leaving it off.
+ * Assemble what gets sent: `type` and `message` always, and a diagnostic only if it is
+ * known. An empty `device` claims the app collects none, which is wronger than leaving it off.
  */
 export function buildReport(
   type: ReportType,
   input: { message: string; title?: string },
   diagnostics: Diagnostics = {},
 ): Report {
-  /* The embedded server is two fields on the wire rather than one, because
-   * "running its own server" and "which version that server is" answer
-   * different questions and the second is often the one that matters. Neither
-   * has a column on the service, so they go in `extra`, which is what it is
-   * for. Only the desktop can run one, and the phone simply never sets them. */
+  /* The embedded server is two fields on the wire, because "running one" and "which version"
+   * answer different questions. Neither has a column, so they go in `extra`. */
   const extra = some({
     embeddedServer: bool(diagnostics.embeddedServer),
     embeddedServerVersion: str(diagnostics.embeddedServerVersion),

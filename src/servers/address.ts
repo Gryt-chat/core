@@ -17,10 +17,8 @@ export function normalizeCode(input: string): string {
 }
 
 /**
- * The default host for a legacy `/invite/<code>` link.
- *
- * Those links carry no host, and the only client ever served from a path like
- * that is the hosted one.
+ * The default host for a legacy `/invite/<code>` link. Those carry no host, and the only
+ * client ever served from a path like that is the hosted one.
  */
 const DEFAULT_LEGACY_HOST = "app.gryt.chat";
 
@@ -31,10 +29,8 @@ export interface ServerInput {
   code: string;
 }
 
-/* Three shapes: a full invite link, a legacy /invite/<code>, and a plain
-   address. `normalizeHost` alone is wrong for the first two — it returns the
-   link's host, so you would join gryt.chat instead of the server named in the
-   query. Anything that does not parse as a link falls through to an address. */
+/* Three shapes: a full invite link, a legacy /invite/<code>, and a plain address.
+   `normalizeHost` alone returns the link's host, so you would join gryt.chat instead. */
 export function parseServerInput(
   input: string,
   opts?: { defaultLegacyHost?: string },
@@ -50,9 +46,8 @@ export function parseServerInput(
     try {
       const url = new URL(raw);
       const path = url.pathname || "/";
-      // gryt://invite?host=…&code=… puts "invite" in the authority rather than
-      // the path, because the scheme is not one the URL parser treats as
-      // special. Both spellings mean the same thing.
+      // gryt://invite?host=…&code=… puts "invite" in the authority rather than the path,
+      // because the scheme is not one the URL parser treats as special. Both mean the same.
       const isInvite = path.startsWith("/invite") || url.hostname === "invite";
 
       if (isInvite) {

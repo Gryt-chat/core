@@ -1,8 +1,7 @@
 name: Release
 
-# Dispatched, not automatic. Same call @gryt/voice makes and for the same
-# reasons: no changesets, one maintainer, and two consumers that pin a version
-# deliberately. You pick it when you mean it.
+# Dispatched, not automatic. The same call @gryt/voice makes: no changesets, one maintainer,
+# and two consumers that pin a version deliberately.
 
 on:
   workflow_dispatch:
@@ -18,10 +17,8 @@ on:
         type: choice
         options: [latest, beta, next]
 
-# Two dispatches at once put @gryt/voice's 0.1.0-beta.6 on npm with no commit
-# behind it: both published, and the slower one then failed to push because the
-# faster had already moved main. Releases queue instead of racing, and are never
-# cancelled, because cancelling one mid-publish is worse than waiting.
+# Two dispatches at once put @gryt/voice's 0.1.0-beta.6 on npm with no commit behind it.
+# Releases queue instead of racing, and are never cancelled: cancelling mid-publish is worse.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -57,19 +54,13 @@ jobs:
 
       - run: npm run build
 
-      # Against the real dist, before anything is published. @gryt/voice shipped
-      # twice with exports the client needed missing, each time found by
-      # installing the package and waiting for tsc. This is that check, and here
-      # it also fails on an export that appeared without being listed, since a
-      # name only one app uses is the two apps drifting apart again.
+      # Against the real dist, before anything is published. It also fails on an export that
+      # appeared without being listed, since a name only one app uses is the two drifting.
       - name: Check the built package imports and is complete
         run: npm run check-surface
 
-      # The version in package.json is whatever the last release left there, and
-      # this step is the only thing that moves it. A pull request that bumps it
-      # by hand does not get that version published — `npm version minor` reads
-      # the bumped number and goes one further, so the intended one is skipped
-      # and never exists on npm. That happened once, between 0.1.0 and 0.2.0.
+      # The version in package.json is whatever the last release left, and this step is the
+      # only thing that moves it: a hand bump makes `npm version` skip the intended one.
       - name: Set the version
         id: version
         run: |
@@ -89,16 +80,8 @@ jobs:
           # main. Rebase onto whatever landed while the build ran.
           git pull --rebase origin main
 
-          # After the rebase, not before. A rebase rewrites the commit this tag
-          # would have been on, and --follow-tags only pushes tags reachable
-          # from what it is pushing — so a tag made first is left on the
-          # abandoned commit and silently not pushed. That is how v0.1.0 and
-          # v0.5.0 ended up with no tag while 0.2.0 to 0.4.0 have one: it only
-          # happens when something else lands on main during the build.
-          #
-          # Annotated, because --follow-tags ignores lightweight tags. The voice
-          # workflow tagged every release from 0.1.0-beta.1 onwards and pushed
-          # none of them, silently, because of that one flag.
+          # After the rebase, not before: a rebase rewrites the commit, and --follow-tags
+          # only pushes reachable tags. Annotated, because it ignores lightweight ones.
           git tag -a "v${{ steps.version.outputs.version }}" \
             -m "v${{ steps.version.outputs.version }}"
 

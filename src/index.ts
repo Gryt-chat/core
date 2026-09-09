@@ -1,6 +1,5 @@
-/* What belongs here: it must compile with no DOM and no React Native, and both
-   apps must otherwise need a copy. The barrel is flat and named because
-   `check-public-surface.mjs` asserts against it. */
+/* What belongs here: it must compile with no DOM and no React Native, and both apps must
+   otherwise need a copy. The barrel is flat and named, because the surface check reads it. */
 
 export {
   buildReport,

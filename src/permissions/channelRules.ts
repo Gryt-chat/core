@@ -1,9 +1,5 @@
-/* Inherit is the absence of a row, so a cell has three states and only two are
-   ever written.
-
-   `indexRules` keys on role and permission joined by NUL, because NUL cannot
-   appear in either half. Written as `\u0000` rather than a raw byte: literal
-   NULs make git treat the file as binary and stop showing diffs. */
+/* Inherit is the absence of a row, so a cell has three states and only two are written.
+   `indexRules` keys on NUL, written as `\u0000` or git treats the file as binary. */
 
 export type RuleEffect = "allow" | "deny";
 
@@ -26,12 +22,8 @@ export type ScopeChoice =
 export const CUSTOM_VALUE = "custom";
 
 /**
- * The dropdown value that means "no rules at all".
- *
- * A word rather than an empty string: the Select reads "" as "nothing chosen"
- * and paints its placeholder over the label, so a channel open to everyone
- * showed "Select" instead of "Everyone". See [[base-ui-select-empty-value]] —
- * the Max Bitrate control in the same dialog already used "default" for this.
+ * The dropdown value that means "no rules at all". A word rather than an empty string: the
+ * Select reads "" as "nothing chosen" and paints its placeholder over the label.
  */
 export const EVERYONE_VALUE = "everyone";
 
@@ -51,11 +43,8 @@ export function cellState(
 }
 
 /**
- * The next state when somebody clicks a cell.
- *
- * inherit to deny to allow and back to inherit. Deny comes first deliberately:
- * taking something away is what people open this to do, and it puts the
- * dangerous state one click from neutral rather than two.
+ * The next state when somebody clicks a cell: inherit, deny, allow, inherit. Deny first,
+ * because taking something away is what people open this to do.
  */
 export function nextCellState(current: CellState): CellState {
   if (current === "inherit") return "deny";
@@ -76,11 +65,8 @@ export function withCell(
 }
 
 /**
- * Which dropdown value a channel is showing.
- *
- * The server sends the scope id plus whether it is a template. A scope that is
- * not a template is this channel's own, which is Custom; no scope at all is
- * Everyone.
+ * Which dropdown value a channel is showing. A scope that is not a template is this
+ * channel's own, which is Custom; no scope at all is Everyone.
  */
 export function scopeChoiceValue(scopeId: string | null, isTemplate: boolean): string {
   if (!scopeId) return EVERYONE_VALUE;
@@ -95,12 +81,8 @@ export function scopeChoiceFromValue(value: string): ScopeChoice {
 }
 
 /**
- * The payload for `server:channels:scope:set`.
- *
- * Custom sends its rules; the other two send none. Templates deliberately do
- * not carry rules here — editing a template from a channel would change every
- * other channel using it, which is the opposite of what somebody expects from
- * a screen titled with one channel's name.
+ * The payload for `server:channels:scope:set`. Templates deliberately do not carry rules:
+ * editing one from a channel would change every other channel using it.
  */
 export function scopeSetPayload(
   choice: ScopeChoice,
@@ -112,11 +94,8 @@ export function scopeSetPayload(
 }
 
 /**
- * The dropdown options: Everyone, then each template, then Custom.
- *
- * Custom last because it is the escape hatch. Somebody scanning the list should
- * meet the shared answers first — the whole point of templates is that reaching
- * for Custom is the uncommon choice.
+ * The dropdown options: Everyone, then each template, then Custom. Custom last, because it
+ * is the escape hatch and reaching for it is the uncommon choice.
  */
 export function scopeOptions(
   templates: { id: string; name: string | null }[],
@@ -131,12 +110,8 @@ export function scopeOptions(
 }
 
 /**
- * A one-line summary of what a set of rules does, for the note under the
- * dropdown.
- *
- * Reading is called out on its own because it is the rule with a different
- * consequence: a role denied `read_messages` is not shown a locked channel,
- * it is shown nothing at all, and somebody setting that deserves to be told.
+ * A one-line summary of what a set of rules does. Reading is called out on its own: a role
+ * denied `read_messages` is shown nothing at all rather than a locked channel.
  */
 export function describeRules(
   rules: ChannelRule[],
