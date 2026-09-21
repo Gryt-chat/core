@@ -29,8 +29,8 @@ export interface ServerInput {
   code: string;
 }
 
-/* Three shapes: a full invite link, a legacy /invite/<code>, and a plain address.
-   `normalizeHost` alone returns the link's host, so you would join gryt.chat instead. */
+/* Four shapes: an invite link with a code, one with only a host, a legacy /invite/<code>,
+   and a plain address. `normalizeHost` alone returns the link's host, so you'd join gryt.chat. */
 export function parseServerInput(
   input: string,
   opts?: { defaultLegacyHost?: string },
@@ -59,6 +59,9 @@ export function parseServerInput(
         if (parts[0] === "invite" && parts[1]) {
           return { host: legacyHost, code: normalizeCode(parts[1]) };
         }
+
+        // A server anyone can join needs no code, so its link names only the host.
+        if (host) return { host, code: "" };
       }
     } catch {
       // Not a URL after all. It is still probably an address.
@@ -66,4 +69,66 @@ export function parseServerInput(
   }
 
   return { host: normalizeHost(raw), code: "" };
+}
+
+/** The link that opens an invite in whichever app somebody has. Leave out the code for a
+    server anyone can join. */
+export function inviteLink(host: string, code?: string): string {
+  const cleanCode = normalizeCode(code ?? "");
+  const query = `host=${encodeURIComponent(normalizeHost(host))}`;
+  return `https://gryt.chat/invite?${query}${cleanCode ? `&code=${encodeURIComponent(cleanCode)}` : ""}`;
+}
+
+/** Names that only mean something on one network. A bare name with no dot is one too. */
+const LOCAL_SUFFIXES = ["localhost", "local", "localdomain", "lan", "home", "internal", "home.arpa"];
+
+/** Lowercased, with any port, brackets and trailing dot removed. */
+function bareHostname(host: string): string {
+  const trimmed = normalizeHost(host).toLowerCase();
+  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(trimmed);
+  if (bracketed) return bracketed[1];
+  const colons = (trimmed.match(/:/g) || []).length;
+  const withoutPort = colons === 1 ? trimmed.replace(/:\d*$/, "") : trimmed;
+  return withoutPort.replace(/\.$/, "");
+}
+
+function ipv4Octets(name: string): number[] | null {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return null;
+  const octets = name.split(".").map(Number);
+  return octets.every((n) => n <= 255) ? octets : null;
+}
+
+function isPublicIpv4([a, b]: number[]): boolean {
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // CGNAT, and Tailscale
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  return !(a === 192 && b === 168);
+}
+
+/**
+ * Whether an address works for somebody on another network. Loopback, private and
+ * link-local ranges, CGNAT, and names like `nas` or `box.local` do not.
+ */
+export function isPublicHost(host: string): boolean {
+  const name = bareHostname(host);
+  if (!name) return false;
+
+  const v4 = ipv4Octets(name);
+  if (v4) return isPublicIpv4(v4);
+
+  if (name.includes(":")) {
+    const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(name);
+    if (mapped) {
+      const octets = ipv4Octets(mapped[1]);
+      return !!octets && isPublicIpv4(octets);
+    }
+    if (name === "::" || name === "::1") return false;
+    // fc00::/7 is private, fe80::/10 is link-local.
+    return !/^f[cd]/.test(name) && !/^fe[89ab]/.test(name);
+  }
+
+  // No top-level domain is all digits, so `999.1.1.1` is a broken address rather than a name.
+  if (!name.includes(".") || /\.\d+$/.test(name)) return false;
+  return !LOCAL_SUFFIXES.some((suffix) => name === suffix || name.endsWith(`.${suffix}`));
 }

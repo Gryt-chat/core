@@ -41,6 +41,8 @@ export {
 } from "./conversations/title.js";
 
 export {
+  inviteLink,
+  isPublicHost,
   normalizeCode,
   normalizeHost,
   parseServerInput,
