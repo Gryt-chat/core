@@ -86,6 +86,7 @@ export {
 } from "./permissions/folderRules.js";
 
 export {
+  agreementAt,
   createTermsGate,
   GUIDELINES_URL,
   TERMS_STORAGE_KEY,

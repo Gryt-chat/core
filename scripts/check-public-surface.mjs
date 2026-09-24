@@ -56,6 +56,7 @@ const REQUIRED = [
   "folderFollowNote",
   "folderPhrase",
   // terms
+  "agreementAt",
   "createTermsGate",
   "GUIDELINES_URL",
   "TERMS_STORAGE_KEY",
