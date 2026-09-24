@@ -90,4 +90,5 @@ export {
   GUIDELINES_URL,
   TERMS_STORAGE_KEY,
   TERMS_URL,
+  TERMS_VERSION,
 } from "./terms/termsAgreement.js";
