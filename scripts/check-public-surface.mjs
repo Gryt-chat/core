@@ -49,6 +49,8 @@ const REQUIRED = [
   "OFFLINE_GROUP_KEY",
   "UNGROUPED_GROUP_KEY",
   "groupMembersByRole",
+  // webrtc
+  "senderStreamId",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.

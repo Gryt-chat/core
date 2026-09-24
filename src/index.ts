@@ -77,3 +77,5 @@ export {
   type GroupableRole,
   type MemberGroup,
 } from "./members/groups.js";
+
+export { senderStreamId } from "./webrtc/senderStreamId.js";
