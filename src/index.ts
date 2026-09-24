@@ -84,3 +84,10 @@ export {
   folderFollowNote,
   folderPhrase,
 } from "./permissions/folderRules.js";
+
+export {
+  createTermsGate,
+  GUIDELINES_URL,
+  TERMS_STORAGE_KEY,
+  TERMS_URL,
+} from "./terms/termsAgreement.js";

@@ -55,6 +55,11 @@ const REQUIRED = [
   "describeFolderRules",
   "folderFollowNote",
   "folderPhrase",
+  // terms
+  "createTermsGate",
+  "GUIDELINES_URL",
+  "TERMS_STORAGE_KEY",
+  "TERMS_URL",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
