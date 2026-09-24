@@ -51,6 +51,10 @@ const REQUIRED = [
   "groupMembersByRole",
   // webrtc
   "senderStreamId",
+  // permissions (folders)
+  "describeFolderRules",
+  "folderFollowNote",
+  "folderPhrase",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.

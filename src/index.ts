@@ -79,3 +79,8 @@ export {
 } from "./members/groups.js";
 
 export { senderStreamId } from "./webrtc/senderStreamId.js";
+export {
+  describeFolderRules,
+  folderFollowNote,
+  folderPhrase,
+} from "./permissions/folderRules.js";
