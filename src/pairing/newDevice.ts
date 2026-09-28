@@ -180,8 +180,12 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
         });
         if (failure) throw failure;
         if (polled.status === "ok") return checkIdToken(polled.tokens, account, session!.keycloakNonce);
+        // RFC 8628's own two terminal errors, plus what auth#46 leaves behind when A's approve
+        // endpoint refuses the code: either way N's device grant sees it as denied.
+        if (polled.status === "denied") throw new PairingEnded("access_denied");
+        if (polled.status === "expired") throw new PairingEnded("expired_token");
         if (polled.status === "slow_down") interval += 5000;
-        else if (polled.status !== "pending") break;
+        // Anything else is "pending": keep polling.
       }
       throw new PairingEnded("sign_in_failed");
     } finally {

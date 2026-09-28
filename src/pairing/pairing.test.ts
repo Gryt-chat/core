@@ -162,7 +162,101 @@ describe("pairing an account", () => {
     };
     a.approve(envelope(account(env)), async () => "token:user-1");
     await env.until(() => phase(a) === "ended");
-    assert.deepEqual(a.state, { phase: "ended", reason: "approve:code_used" });
+    assert.deepEqual(a.state, { phase: "ended", reason: "code_used" });
+  });
+});
+
+describe("Keycloak's own refusals get their own reason (GRYT-1578)", () => {
+  /** Swaps in a canned response from the approve endpoint. Must run before `env.approver()`
+      captures the fetch it was given, so set it up before `toEmoji`. */
+  function refuseApproval(env: Env, status: number, error: string) {
+    env.keycloak.fetch = async () => ({ status, json: async () => ({ error }) });
+  }
+
+  it("gives an unknown user_code its own reason", async () => {
+    const env = setup();
+    refuseApproval(env, 400, "unknown_code");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "code_expired" });
+  });
+
+  it("gives an expired user_code the same reason as an unknown one", async () => {
+    const env = setup();
+    refuseApproval(env, 410, "expired_code");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "code_expired" });
+  });
+
+  it("gives the approve endpoint's rate limit its own reason", async () => {
+    const env = setup();
+    refuseApproval(env, 429, "rate_limited");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "rate_limited" });
+  });
+
+  it("gives a pending required action its own reason", async () => {
+    const env = setup();
+    refuseApproval(env, 403, "required_actions");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "required_actions" });
+  });
+
+  it("gives a stale access token its own reason", async () => {
+    const env = setup();
+    refuseApproval(env, 403, "stale_token");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "stale_token" });
+  });
+
+  it("still falls back to approve:<code> for a refusal with no reason of its own", async () => {
+    const env = setup();
+    refuseApproval(env, 403, "wrong_client");
+    const { a } = await toEmoji(env, "code");
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(a) === "ended");
+    assert.deepEqual(a.state, { phase: "ended", reason: "approve:wrong_client" });
+  });
+
+  it("tells N when Keycloak's device grant itself says access_denied", async () => {
+    const env = setup();
+    const { n, a } = await toEmoji(env, "code");
+    env.keycloak.oidc.deviceToken = async () => ({ status: "denied" });
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(n) === "ended");
+    assert.deepEqual(n.state, { phase: "ended", reason: "access_denied" });
+  });
+
+  it("tells N when the device grant's user_code has expired", async () => {
+    const env = setup();
+    const { n, a } = await toEmoji(env, "code");
+    env.keycloak.oidc.deviceToken = async () => ({ status: "expired" });
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(n) === "ended");
+    assert.deepEqual(n.state, { phase: "ended", reason: "expired_token" });
+  });
+
+  it("backs off on slow_down instead of ending the pairing", async () => {
+    const env = setup();
+    const { n, a } = await toEmoji(env, "code");
+    const original = env.keycloak.oidc.deviceToken;
+    let calls = 0;
+    env.keycloak.oidc.deviceToken = async (req) => {
+      calls++;
+      return calls === 1 ? { status: "slow_down" } : original(req);
+    };
+    a.approve(envelope(account(env)), async () => "token:user-1");
+    await env.until(() => phase(n) === "joining");
+    assert.ok(calls >= 2);
   });
 });
 
