@@ -94,6 +94,7 @@ export {
   TERMS_VERSION,
 } from "./terms/termsAgreement.js";
 
+export { createMlsDmDriver, MlsDriverError, type MlsDriverErrorCode } from "./mls/dmDriver.js";
 export type {
   DmSealingMode,
   MlsClaimedKeyPackage,

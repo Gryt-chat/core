@@ -47,6 +47,11 @@ goes missing **and** when one appears that nobody listed.
 - **`permissions`** — the channel scope matrix: rules in, grid out, and back.
   The two apps keyed their cell map differently, a NUL on the desktop and a
   space on the phone, which is a key one of them could collide on.
+- **`mls`** — the DM half of MLS stage 1. It keeps a device's KeyPackages
+  topped up, opens a DM group, joins from a Welcome, sends, and reads the group
+  log in order. Each app hands it the socket, the storage and the pins through
+  the interfaces in `src/mls/interfaces.ts`. It's the one module with a
+  dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
 
 ## What deliberately isn't
 

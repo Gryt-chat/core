@@ -62,6 +62,9 @@ const REQUIRED = [
   "TERMS_STORAGE_KEY",
   "TERMS_URL",
   "TERMS_VERSION",
+  // mls
+  "createMlsDmDriver",
+  "MlsDriverError",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -81,6 +84,14 @@ const REQUIRED_TYPES = [
   "GroupableMember",
   "GroupableRole",
   "MemberGroup",
+  "DmSealingMode",
+  "MlsDmDriver",
+  "MlsDmDriverOptions",
+  "MlsDmEvents",
+  "MlsDriverErrorCode",
+  "MlsPins",
+  "MlsStateStore",
+  "MlsTransport",
 ];
 
 const dist = resolve("dist/index.js");

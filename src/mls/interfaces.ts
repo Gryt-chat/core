@@ -134,7 +134,10 @@ export interface MlsKeyPackageRecord {
   keyPackage: Uint8Array;
   privatePackage: Uint8Array;
   lastResort: boolean;
+  /** Milliseconds. */
   createdAt: number;
+  /** Seconds, once @gryt/crypto gives KeyPackages a lifetime. */
+  expiresAt?: number;
 }
 
 /**
@@ -161,6 +164,7 @@ export interface MlsStateStore {
 
   putKeyPackages(records: MlsKeyPackageRecord[]): Promise<void>;
   getKeyPackage(ref: string): Promise<MlsKeyPackageRecord | null>;
+  listKeyPackages(): Promise<MlsKeyPackageRecord[]>;
   deleteKeyPackage(ref: string): Promise<void>;
 
   loadGroup(conversationId: string): Promise<MlsGroupRecord | null>;
@@ -173,11 +177,11 @@ export interface MlsStateStore {
 
 /**
  * The person-key pin (design, section 1). The app verifies each member's person key binding
- * and pins it on first sight; the driver only asks.
+ * and pins it on first sight, before the driver meets their leaves; the driver only asks.
  */
 export interface MlsPins {
-  /** Whose pinned person key this is, your own included, or null for nobody's. */
-  personOf(personPublicKey: Uint8Array): string | null | Promise<string | null>;
+  /** Which member of this conversation holds this person key by pin, you included, or null. */
+  personOf(conversationId: string, personPublicKey: Uint8Array): string | null | Promise<string | null>;
   /** Decision 4: once a peer is seen on MLS, never seal to them with version 1 again. */
   seenOnMls(serverUserId: string): boolean | Promise<boolean>;
   markSeenOnMls(serverUserId: string): void | Promise<void>;
