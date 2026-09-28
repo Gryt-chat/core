@@ -1,28 +1,56 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { asIdentityScope, createMlsDevice, derivePersonKeyPair } from "@gryt/crypto";
+import {
+  asIdentityScope,
+  createMlsDevice,
+  derivePersonKeyPair,
+  generateMlsKeyPackage,
+  pinPeerKey,
+  pinPersonKey,
+  readMlsKeyPackage,
+  type PeerPin,
+  type VerifiedDmKeyBinding,
+  type VerifiedPersonKeyBinding,
+} from "@gryt/crypto";
 
 import { FakeDeliveryService, MemoryMlsStore } from "./deliveryService.fake.ts";
 import { createMlsDmDriver, MlsDriverError } from "./dmDriver.ts";
 import type { MlsDecryptedMessage, MlsServerCapability } from "./interfaces.ts";
+import { mlsPinsFromPeerPins } from "./pins.ts";
 
 const SCOPE = asIdentityScope("srv:driver-test");
 const CAPABILITY: MlsServerCapability = { version: 1, ciphersuites: [1], retentionDays: 30 };
+const DAY = 86_400;
 const seedOf = (n: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * n + n) % 251);
 const SEEDS: Record<string, Uint8Array> = { kari: seedOf(3), ola: seedOf(5), mallory: seedOf(7) };
-const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const text = (s: string) => new TextEncoder().encode(s);
+const personKeyOf = (who: string) => derivePersonKeyPair(SEEDS[who], SCOPE).publicKey;
 
-/* Every device pins every person up front, the way the member list would. */
-const PINNED = new Map(Object.entries(SEEDS).map(([who, seed]) => [hex(derivePersonKeyPair(seed, SCOPE).publicKey), who]));
+/* The pins evaluateMemberKeys would have written from the member list; bindings stand in as checked. */
+function pinStore(people: string[], withPersonKey: string[]) {
+  let pins: Record<string, PeerPin> = {};
+  const store = { read: () => structuredClone(pins), write: (p: Record<string, PeerPin>) => void (pins = structuredClone(p)) };
+  const pinPerson = (who: string) =>
+    pinPersonKey(store, SCOPE, who, { personPublicKey: personKeyOf(who), identityThumbprint: `id-${who}`, scope: SCOPE, signedAt: 0 } as VerifiedPersonKeyBinding);
+  for (const who of people) {
+    pinPeerKey(store, SCOPE, who, { dmPublicKey: new Uint8Array(32), identityThumbprint: `id-${who}` } as VerifiedDmKeyBinding);
+    if (withPersonKey.includes(who)) pinPerson(who);
+  }
+  return { store, pinPerson };
+}
 
-function device(fake: FakeDeliveryService, who: string, name: string, opts: { seed?: Uint8Array; capability?: MlsServerCapability | null } = {}) {
+type DeviceOptions = { seed?: Uint8Array; capability?: MlsServerCapability | null; unpinned?: string[] };
+
+function device(fake: FakeDeliveryService, who: string, name: string, opts: DeviceOptions = {}) {
   const store = new MemoryMlsStore();
   const messages: MlsDecryptedMessage[] = [];
   const lost: { conversationId: string; reason: string }[] = [];
   const undecryptable: { conversationId: string; seq: number; reason: string }[] = [];
   const seen = new Set<string>();
+  const others = Object.keys(SEEDS).filter((p) => p !== who);
+  const pins = pinStore(others, others.filter((p) => !opts.unpinned?.includes(p)));
+  const seed = opts.seed ?? SEEDS[who];
   const { transport, socket } = fake.connect(who);
   const driver = createMlsDmDriver({
     transport,
@@ -30,21 +58,31 @@ function device(fake: FakeDeliveryService, who: string, name: string, opts: { se
     scope: SCOPE,
     serverUserId: who,
     capability: opts.capability === undefined ? CAPABILITY : opts.capability,
-    pins: {
-      personOf: (_conversationId, key) => PINNED.get(hex(key)) ?? null,
-      seenOnMls: (id) => seen.has(id),
-      markSeenOnMls: (id) => void seen.add(id),
-    },
+    pins: mlsPinsFromPeerPins({
+      store: pins.store,
+      scope: SCOPE,
+      serverUserId: who,
+      ownPersonKey: derivePersonKeyPair(seed, SCOPE).publicKey,
+      membersOf: (conversationId) => fake.conversations.get(conversationId) ?? [],
+      seen,
+    }),
     events: {
       onMessage: (m) => void messages.push(m),
       onGroupLost: (i) => void lost.push(i),
       onUndecryptable: (i) => void undecryptable.push(i),
     },
-    newDevice: () => createMlsDevice({ seed: opts.seed ?? SEEDS[who], scope: SCOPE, deviceName: name }),
+    newDevice: () => createMlsDevice({ seed, scope: SCOPE, deviceName: name }),
   });
   socket.driver = driver;
   const texts = () => messages.map((m) => `${m.senderServerUserId}: ${new TextDecoder().decode(m.plaintext)}`);
-  return { driver, store, messages, lost, undecryptable, seen, socket, texts };
+  return { driver, store, messages, lost, undecryptable, seen, socket, texts, pinPerson: pins.pinPerson };
+}
+
+/* A package for `d` made as if the clock said `at`, put first in line for its device. */
+async function stalePackage(fake: FakeDeliveryService, d: ReturnType<typeof device>, who: string, at: number) {
+  const kp = await generateMlsKeyPackage(d.store.device!, at);
+  const { ref } = await readMlsKeyPackage(kp.keyPackage, SCOPE, at);
+  fake.keyPackages.unshift({ ref, serverUserId: who, deviceId: d.store.device!.deviceId, data: kp.keyPackage, lastResort: false, claimed: false });
 }
 
 describe("MLS DM driver", () => {
@@ -272,6 +310,77 @@ describe("MLS DM driver", () => {
     await fake.settle();
     assert.equal(fake.stats.claims, 2);
     assert.deepEqual(ola.texts(), ["kari: second try"]);
+  });
+
+  for (const [label, offset] of [["expired", -40 * DAY], ["not valid yet", 2 * DAY]] as const) {
+    it(`claims a fresh package when the first one is ${label}`, async () => {
+      const fake = new FakeDeliveryService(SCOPE);
+      const dm = fake.dm("kari", "ola");
+      const kari = device(fake, "kari", "laptop");
+      const ola = device(fake, "ola", "phone");
+      await kari.driver.start();
+      await ola.driver.start();
+      await stalePackage(fake, ola, "ola", Math.floor(Date.now() / 1000) + offset);
+
+      await kari.driver.send(dm, "ola", text("fresh one"));
+      await fake.settle();
+      assert.equal(fake.stats.claims, 2);
+      assert.deepEqual(ola.texts(), ["kari: fresh one"]);
+    });
+  }
+
+  it("stores each package's expiry and renews a last-resort one close to it", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const ola = device(fake, "ola", "phone");
+    await ola.driver.start();
+    const now = Math.floor(Date.now() / 1000);
+    const records = [...ola.store.keyPackages.values()];
+    assert.ok(records.every((k) => k.expiresAt !== undefined && Math.abs(k.expiresAt - (now + 30 * DAY)) < 2 * 3600));
+
+    const last = records.find((k) => k.lastResort)!;
+    last.expiresAt = now + 3 * DAY;
+    await ola.driver.start();
+    const lastResorts = fake.keyPackages.filter((k) => k.lastResort && !k.claimed);
+    assert.equal(lastResorts.length, 1);
+    assert.notEqual(lastResorts[0].ref, last.ref, "a new last-resort package replaced the old one");
+    assert.ok(ola.store.keyPackages.has(last.ref), "the old private half stays for Welcomes already on their way");
+  });
+
+  it("won't add a peer whose person key isn't pinned, and will once it is", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop", { unpinned: ["ola"] });
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+
+    await assert.rejects(kari.driver.send(dm, "ola", text("x")), (e: unknown) => e instanceof MlsDriverError && e.code === "peer_unverified");
+    assert.equal(fake.groups.get(dm)!.epoch, 0);
+
+    kari.pinPerson("ola");
+    await kari.driver.send(dm, "ola", text("now pinned"));
+    await fake.settle();
+    assert.deepEqual(ola.texts(), ["kari: now pinned"]);
+  });
+
+  it("keeps a Welcome from a peer it hasn't pinned yet, and joins once it has", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop", { unpinned: ["ola"] });
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+
+    await ola.driver.send(dm, "kari", text("hei"));
+    await fake.settle();
+    assert.equal(kari.store.groups.size, 0);
+    assert.equal(fake.welcomes.length, 1, "the Welcome stays on the server");
+
+    kari.pinPerson("ola");
+    await kari.driver.start();
+    await fake.settle();
+    assert.deepEqual(kari.texts(), ["ola: hei"]);
+    assert.equal(fake.welcomes.length, 0);
   });
 
   it("tops KeyPackages back up once fewer than half are left", async () => {

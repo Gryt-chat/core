@@ -50,8 +50,9 @@ goes missing **and** when one appears that nobody listed.
 - **`mls`** — the DM half of MLS stage 1. It keeps a device's KeyPackages
   topped up, opens a DM group, joins from a Welcome, sends, and reads the group
   log in order. Each app hands it the socket, the storage and the pins through
-  the interfaces in `src/mls/interfaces.ts`. It's the one module with a
-  dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
+  the interfaces in `src/mls/interfaces.ts`. `mlsPinsFromPeerPins` builds the
+  pins from the peer pins `@gryt/crypto` already keeps. It's the one module with
+  a dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
 
 ## What deliberately isn't
 

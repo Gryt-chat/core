@@ -35,6 +35,6 @@
     "access": "public"
   },
   "dependencies": {
-    "@gryt/crypto": "0.6.0"
+    "@gryt/crypto": "0.7.0"
   }
 }

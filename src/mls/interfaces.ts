@@ -1,3 +1,5 @@
+import type { TrustPersonKey } from "@gryt/crypto";
+
 /* What each app implements for the MLS DM driver: the socket, the storage and the pins.
    Shapes follow the mls:* events in Gryt-chat/server#241. Bytes are always Uint8Array. */
 
@@ -136,7 +138,7 @@ export interface MlsKeyPackageRecord {
   lastResort: boolean;
   /** Milliseconds. */
   createdAt: number;
-  /** Seconds, once @gryt/crypto gives KeyPackages a lifetime. */
+  /** Seconds, from `generateMlsKeyPackage`. Absent on records written before 0.7.0. */
   expiresAt?: number;
 }
 
@@ -182,6 +184,8 @@ export interface MlsStateStore {
 export interface MlsPins {
   /** Which member of this conversation holds this person key by pin, you included, or null. */
   personOf(conversationId: string, personPublicKey: Uint8Array): string | null | Promise<string | null>;
+  /** The engine's check for every leaf. Without it, any leaf `personOf` names passes. */
+  trustFor?(conversationId: string): TrustPersonKey;
   /** Decision 4: once a peer is seen on MLS, never seal to them with version 1 again. */
   seenOnMls(serverUserId: string): boolean | Promise<boolean>;
   markSeenOnMls(serverUserId: string): void | Promise<void>;
