@@ -48,11 +48,13 @@ type DeviceOptions = {
   capability?: MlsServerCapability | null;
   unpinned?: string[];
   store?: MemoryMlsStore;
+  sendGiveUpMs?: number;
 };
 
 function device(fake: FakeDeliveryService, who: string, name: string, opts: DeviceOptions = {}) {
   const store = opts.store ?? new MemoryMlsStore();
   const removed: number[] = [];
+  const waiting: boolean[] = [];
   const messages: MlsDecryptedMessage[] = [];
   const lost: { conversationId: string; reason: string }[] = [];
   const undecryptable: { conversationId: string; seq: number; reason: string }[] = [];
@@ -80,12 +82,14 @@ function device(fake: FakeDeliveryService, who: string, name: string, opts: Devi
       onGroupLost: (i) => void lost.push(i),
       onUndecryptable: (i) => void undecryptable.push(i),
       onDeviceRemoved: () => void removed.push(Date.now()),
+      onWaiting: (w) => void waiting.push(w),
     },
     newDevice: () => createMlsDevice({ seed, scope: SCOPE, deviceName: name }),
+    sendGiveUpMs: opts.sendGiveUpMs,
   });
   socket.driver = driver;
   const texts = () => messages.map((m) => `${m.senderServerUserId}: ${new TextDecoder().decode(m.plaintext)}`);
-  return { driver, store, messages, lost, undecryptable, removed, seen, socket, texts, pinPerson: pins.pinPerson };
+  return { driver, store, messages, lost, undecryptable, removed, waiting, seen, socket, texts, pinPerson: pins.pinPerson };
 }
 
 /* A package for `d` made as if the clock said `at`, put first in line for its device. */
@@ -570,5 +574,160 @@ describe("MLS DM driver", () => {
     const dm = fake.dm("kari", "ola");
     const kari = device(fake, "kari", "laptop");
     await assert.rejects(kari.driver.send(dm, "ola", text("x")), (e: unknown) => e instanceof MlsDriverError && e.code === "no_device");
+  });
+});
+
+describe("MLS DM driver, sending across a lost connection (GRYT-1584)", () => {
+  const isCode = (code: string) => (e: unknown) => e instanceof MlsDriverError && e.code === code;
+  const turn = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const logOf = (fake: FakeDeliveryService, dm: string) => fake.groups.get(dm)!.log.filter((e) => e.kind === "application");
+
+  async function pair() {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop");
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+    await kari.driver.send(dm, "ola", text("before"));
+    await fake.settle();
+    return { fake, dm, kari, ola };
+  }
+
+  it("waits while offline, then sends once start() has caught up", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    kari.socket.reachable = false;
+    let settled = false;
+    const sending = kari.driver.send(dm, "ola", text("while down")).finally(() => (settled = true));
+    await turn();
+    assert.deepEqual(kari.waiting, [true]);
+    assert.equal(settled, false, "it waits rather than failing");
+
+    kari.socket.reachable = true;
+    await kari.driver.start();
+    const { seq } = await sending;
+    await fake.settle();
+    assert.deepEqual(kari.waiting, [true, false]);
+    assert.deepEqual(ola.texts(), ["kari: before", "kari: while down"]);
+    assert.equal(logOf(fake, dm).at(-1)!.seq, seq);
+  });
+
+  it("encrypts after the catch-up, so a device added while it waited can read it", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    kari.socket.reachable = false;
+    const sending = kari.driver.send(dm, "ola", text("while away"));
+    await turn();
+
+    // Ola's new tablet goes in while Kari is away, so the group moves on an epoch.
+    const tablet = device(fake, "ola", "tablet");
+    await tablet.driver.start();
+    await ola.driver.send(dm, "kari", text("hi from ola"));
+    await fake.settle();
+    assert.equal(fake.groups.get(dm)!.epoch, 2);
+
+    kari.socket.reachable = true;
+    await kari.driver.start();
+    await sending;
+    await fake.settle();
+    assert.equal(logOf(fake, dm).at(-1)!.epoch, 2, "encrypted in the epoch it went out in");
+    assert.deepEqual(tablet.texts(), ["ola: hi from ola", "kari: while away"]);
+    assert.deepEqual(tablet.undecryptable, []);
+  });
+
+  it("sends the same bytes again when an answer was lost, and the log holds it once", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    kari.socket.lose.set("send", "answer");
+    const { seq } = await kari.driver.send(dm, "ola", text("answer lost"));
+    await fake.settle();
+    assert.equal(logOf(fake, dm).filter((e) => e.seq === seq).length, 1);
+    assert.equal(logOf(fake, dm).length, 2);
+    assert.deepEqual(ola.texts(), ["kari: before", "kari: answer lost"]);
+    assert.deepEqual(ola.undecryptable, []);
+    assert.deepEqual(kari.waiting, [], "a lost answer isn't a lost connection");
+  });
+
+  it("goes again after a request that never arrived, and lands once", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    kari.socket.lose.set("send", "request");
+    await kari.driver.send(dm, "ola", text("request lost"));
+    await fake.settle();
+    assert.equal(logOf(fake, dm).length, 2);
+    assert.deepEqual(ola.texts(), ["kari: before", "kari: request lost"]);
+  });
+
+  it("knows its own message in the log after a reconnect, and doesn't send it again", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    const sendsBy = () => (fake.callsBy.get(kari.store.device!.deviceId) ?? []).filter((c) => c === "send").length;
+    kari.socket.lose.set("send", "answer");
+    const sending = kari.driver.send(dm, "ola", text("landed"));
+    await turn();
+    // Reconnected before the resend: the catch-up finds it, and the log is the answer.
+    await kari.driver.start();
+    const { seq } = await sending;
+    assert.equal(sendsBy(), 2, "the one before, and this one once");
+    assert.equal(logOf(fake, dm).filter((e) => e.seq === seq).length, 1);
+    await fake.settle();
+    assert.deepEqual(ola.texts(), ["kari: before", "kari: landed"]);
+  });
+
+  it("keeps its place when a commit's answer was lost, and adds the peer once", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop");
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+    kari.socket.lose.set("commit", "answer");
+    await kari.driver.send(dm, "ola", text("first"));
+    await fake.settle();
+    assert.deepEqual(kari.lost, []);
+    assert.equal(fake.groups.get(dm)!.epoch, 1, "the add went in once");
+    assert.deepEqual(ola.texts(), ["kari: first"]);
+    await ola.driver.send(dm, "kari", text("and back"));
+    await fake.settle();
+    assert.deepEqual(kari.texts(), ["ola: and back"]);
+  });
+
+  it("sends in the order they were typed once it's back", async () => {
+    const { fake, dm, kari, ola } = await pair();
+    kari.socket.reachable = false;
+    const sends = ["one", "two", "three"].map((t) => kari.driver.send(dm, "ola", text(t)));
+    await turn();
+    kari.socket.reachable = true;
+    await kari.driver.start();
+    await Promise.all(sends);
+    await fake.settle();
+    assert.deepEqual(ola.texts(), ["kari: before", "kari: one", "kari: two", "kari: three"]);
+  });
+
+  it("gives up after the cap, and says offline", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop", { sendGiveUpMs: 30 });
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+    kari.socket.reachable = false;
+    await assert.rejects(kari.driver.send(dm, "ola", text("never")), isCode("offline"));
+    kari.socket.reachable = true;
+    await kari.driver.start();
+    await fake.settle();
+    assert.deepEqual(ola.texts(), []);
+  });
+
+  it("fails what's waiting on stop(), and takes nothing after", async () => {
+    const { dm, kari } = await pair();
+    kari.socket.reachable = false;
+    const sending = kari.driver.send(dm, "ola", text("stopped"));
+    await turn();
+    kari.driver.stop();
+    await assert.rejects(sending, isCode("stopped"));
+    await assert.rejects(kari.driver.send(dm, "ola", text("after")), isCode("stopped"));
+  });
+
+  it("still fails straight away on a refusal", async () => {
+    const { fake, dm, kari } = await pair();
+    fake.groups.get(dm)!.epoch = 0;
+    await assert.rejects(kari.driver.send(dm, "ola", text("future")), isCode("refused"));
   });
 });

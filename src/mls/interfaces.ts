@@ -63,8 +63,8 @@ export interface MlsClaimedKeyPackage extends MlsDeviceRef {
 }
 
 /**
- * One method per mls:* request. The app adds `accessToken`, emits, and resolves with the ack,
- * turning ArrayBuffers into Uint8Arrays. Pushes go to the driver's `handle*` methods instead.
+ * One method per mls:* request: add `accessToken`, emit, resolve with the ack. Pushes go to `handle*`.
+ * Disconnected, answer `offline` without emitting; with no ack in time, answer `timeout`.
  */
 export interface MlsTransport {
   publishKeyPackages(req: {
@@ -224,6 +224,8 @@ export interface MlsDmEvents {
   onMessage(message: MlsDecryptedMessage): void | Promise<void>;
   /** "Some messages couldn't be decrypted on this device" (design, section 2). */
   onUndecryptable?(info: { conversationId: string; seq: number; reason: string }): void;
+  /** Sends are held until the connection is back and `start()` has caught up, or not any more. */
+  onWaiting?(waiting: boolean): void;
   /** This device is out of the group: removed, or its state couldn't keep up. */
   onGroupLost?(info: { conversationId: string; reason: "removed" | "out_of_sync" | "gap" }): void;
   onJoined?(info: { conversationId: string; groupId: string }): void;
@@ -293,6 +295,8 @@ export interface MlsDmDriverOptions {
   capability: MlsServerCapability | null;
   /** The first time only: `createMlsDevice` from @gryt/crypto, so the seed stays in the app. */
   newDevice(): MlsDeviceRecord | Promise<MlsDeviceRecord>;
+  /** How long a send waits for the server before it fails with `offline`. Five minutes. */
+  sendGiveUpMs?: number;
 }
 
 /** One per server. Calls for one conversation run one at a time, in order. */
@@ -300,7 +304,10 @@ export interface MlsDmDriver {
   /** On connect: register, top up KeyPackages, take waiting Welcomes, catch up every group. */
   start(): Promise<void>;
   modeFor(conversationId: string, peerServerUserId: string): Promise<DmSealingMode>;
-  /** Opens the group if need be, adds or removes devices that changed, then sends. */
+  /**
+   * Opens the group if need be, adds or removes devices that changed, then sends. Offline, it
+   * waits for the next `start()` and encrypts after that. It goes out once, or fails `offline`.
+   */
   send(
     conversationId: string,
     peerServerUserId: string,
@@ -321,4 +328,6 @@ export interface MlsDmDriver {
    * Throws `not_own_device` for a device the server doesn't list as yours, or not under your person key.
    */
   addOwnDevice(deviceId: string, options?: MlsAddOwnDeviceOptions): Promise<MlsOwnDeviceAdd[]>;
+  /** Sends still waiting fail with `stopped`, and no more are taken. For a session going away. */
+  stop(): void;
 }

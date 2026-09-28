@@ -14,7 +14,7 @@ import type {
   MlsStateStore,
   MlsTransport,
   MlsWelcomeDelivery,
-} from "./interfaces.ts";
+} from "./interfaces.js";
 
 const MAX_DEVICES = 5;
 const MAX_KEY_PACKAGES = 20;
@@ -51,6 +51,10 @@ interface Socket {
   serverUserId: string;
   driver: MlsDmDriver | null;
   online: boolean;
+  /** False: every call answers `offline` without reaching the server, as an app's transport does. */
+  reachable: boolean;
+  /** The next call to each method either never arrives or has its answer lost. Both answer `timeout`. */
+  lose: Map<keyof MlsTransport, "request" | "answer">;
 }
 
 export class FakeDeliveryService {
@@ -97,7 +101,7 @@ export class FakeDeliveryService {
   }
 
   connect(serverUserId: string): { transport: MlsTransport; socket: Socket } {
-    const socket: Socket = { serverUserId, driver: null, online: true };
+    const socket: Socket = { serverUserId, driver: null, online: true, reachable: true, lose: new Map() };
     this.sockets.push(socket);
     return { transport: this.transportFor(socket), socket };
   }
@@ -109,7 +113,7 @@ export class FakeDeliveryService {
 
   private push(to: string[], deliver: (d: MlsDmDriver) => Promise<void>): void {
     for (const s of this.sockets) {
-      if (!s.online || !s.driver || !to.includes(s.serverUserId)) continue;
+      if (!s.online || !s.reachable || !s.driver || !to.includes(s.serverUserId)) continue;
       const driver = s.driver;
       const p = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(() => deliver(driver));
       const tracked = p.catch(() => undefined).finally(() => this.inFlight.delete(tracked));
@@ -312,6 +316,14 @@ export class FakeDeliveryService {
     const guarded = {} as Record<string, (req: unknown) => Promise<unknown>>;
     for (const [name, method] of Object.entries(methods) as [string, (req: unknown) => Promise<unknown>][]) {
       guarded[name] = async (req) => {
+        if (!socket.reachable) return fail("offline", "Not connected to this server.");
+        const lost = socket.lose.get(name as keyof MlsTransport);
+        socket.lose.delete(name as keyof MlsTransport);
+        if (lost === "request") return fail("timeout", `No answer to ${name}.`);
+        if (lost === "answer") {
+          await guarded[name](req).catch(() => undefined);
+          return fail("timeout", `No answer to ${name}.`);
+        }
         this.checkParts(socket, name, req);
         const deviceId = (req as { deviceId?: unknown })?.deviceId;
         if (typeof deviceId === "string") {
