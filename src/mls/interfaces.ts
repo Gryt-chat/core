@@ -20,6 +20,12 @@ export interface MlsDeviceRef {
   deviceId: string;
 }
 
+/** A row of `mls:devices`. Your own rows say when the server first and last saw each one. */
+export interface MlsListedDevice extends MlsDeviceRef {
+  createdAt?: string;
+  lastSeenAt?: string;
+}
+
 /** The server's view of a group. `groupId` is lower-case hex. */
 export interface MlsGroupView {
   conversationId: string;
@@ -74,7 +80,7 @@ export interface MlsTransport {
   }): Promise<MlsReply<{ keyPackages: MlsClaimedKeyPackage[]; missing: MlsDeviceRef[] }>>;
 
   /** Your own devices with no conversation, or every member's with one. */
-  listDevices(req: { conversationId?: string }): Promise<MlsReply<{ devices: MlsDeviceRef[] }>>;
+  listDevices(req: { conversationId?: string }): Promise<MlsReply<{ devices: MlsListedDevice[] }>>;
 
   removeDevice(req: { deviceId: string }): Promise<MlsReply<object>>;
 
@@ -229,6 +235,16 @@ export type DmSealingMode =
 
 // ── The driver ─────────────────────────────────────────────────────────
 
+/** One of your own devices on this server, for a device list. */
+export interface MlsOwnDevice extends MlsDeviceRef {
+  /** From its device certificate, found in this device or a group you share. Null when none shows it. */
+  name: string | null;
+  /** ISO times from the server, or null from a server that doesn't send them. */
+  addedAt: string | null;
+  lastSeenAt: string | null;
+  thisDevice: boolean;
+}
+
 export interface MlsDmDriverOptions {
   transport: MlsTransport;
   store: MlsStateStore;
@@ -258,7 +274,8 @@ export interface MlsDmDriver {
   handleMessage(entry: MlsLogEntry): Promise<void>;
   handleWelcome(welcome: MlsWelcomeDelivery): Promise<void>;
   handleDevicesChanged(push: { serverUserId: string }): Promise<void>;
-  ownDevices(): Promise<MlsDeviceRef[]>;
+  /** Oldest first, as the server lists them. */
+  ownDevices(): Promise<MlsOwnDevice[]>;
   /** Your own devices only. Every group you share drops it on the next pass. */
   removeOwnDevice(deviceId: string): Promise<void>;
 }

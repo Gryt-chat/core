@@ -13,6 +13,7 @@ import {
   mlsGroupMembers,
   mlsWelcomeRefs,
   processMlsMessage,
+  readDeviceCertificate,
   readMlsKeyPackage,
   removeMlsMembers,
   type DeviceCertificate,
@@ -31,6 +32,7 @@ import type {
   MlsGroupRecord,
   MlsKeyPackageRecord,
   MlsLogEntry,
+  MlsOwnDevice,
   MlsRefusal,
   MlsWelcomeDelivery,
 } from "./interfaces.js";
@@ -627,6 +629,44 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     }
   }
 
+  /** Names from certificates under your own person key: this device's, then your leaves in each group. */
+  async function ownDeviceNames(d: MlsDeviceRecord, wanted: Set<string>): Promise<Map<string, string>> {
+    const mine = readDeviceCertificate(d.certificate, scope);
+    const names = new Map([[mine.deviceId, mine.deviceName]]);
+    const unnamed = () => [...wanted].some((id) => !names.has(id));
+    for (const rec of await store.listGroups()) {
+      if (!unnamed()) break;
+      let members: ReturnType<typeof mlsGroupMembers>;
+      try {
+        members = mlsGroupMembers(decodeMlsGroupState(rec.state, trustFor(rec.conversationId)), scope);
+      } catch {
+        continue;
+      }
+      for (const { certificate: c } of members) {
+        if (wanted.has(c.deviceId) && !names.has(c.deviceId) && sameBytes(c.personPublicKey, mine.personPublicKey)) {
+          names.set(c.deviceId, c.deviceName);
+        }
+      }
+    }
+    return names;
+  }
+
+  async function ownDevices(): Promise<MlsOwnDevice[]> {
+    const r = await transport.listDevices({});
+    if (!r.ok) throw refused("Listing devices", r);
+    const d = await ownDevice();
+    const listed = r.devices.filter((x) => x.serverUserId === self);
+    const names = await ownDeviceNames(d, new Set(listed.map((x) => x.deviceId)));
+    return listed.map((x) => ({
+      serverUserId: x.serverUserId,
+      deviceId: x.deviceId,
+      name: names.get(x.deviceId) ?? null,
+      addedAt: x.createdAt ?? null,
+      lastSeenAt: x.lastSeenAt ?? null,
+      thisDevice: x.deviceId === d.deviceId,
+    }));
+  }
+
   return {
     async start() {
       await ownDevice();
@@ -645,11 +685,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     handleMessage,
     handleWelcome,
     handleDevicesChanged,
-    async ownDevices() {
-      const r = await transport.listDevices({});
-      if (!r.ok) throw refused("Listing devices", r);
-      return r.devices;
-    },
+    ownDevices,
     async removeOwnDevice(deviceId: string) {
       const r = await transport.removeDevice({ deviceId });
       if (!r.ok) throw refused("Removing the device", r);
