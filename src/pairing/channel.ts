@@ -38,11 +38,12 @@ export function sealJson(session: PairingSession, value: Record<string, unknown>
 }
 
 /** The next sealed message as JSON with a `t`, or a throw that ends the pairing as tampered. */
-export function openJson(session: PairingSession, message: RelayMessage | null, t: string): Record<string, unknown> {
+export function openJson(session: PairingSession, message: RelayMessage | null, t?: string): Record<string, unknown> {
   try {
     if (message?.type !== "sealed" || !message.body) throw new Error();
     const value: unknown = JSON.parse(new TextDecoder().decode(session.open(base64UrlDecode(message.body))));
-    if (value && typeof value === "object" && (value as { t?: unknown }).t === t) return value as Record<string, unknown>;
+    const got = value && typeof value === "object" ? (value as { t?: unknown }).t : undefined;
+    if (typeof got === "string" && (t === undefined || got === t)) return value as Record<string, unknown>;
   } catch {
     // Falls through: whatever went wrong, the other side can't be trusted with the rest.
   }

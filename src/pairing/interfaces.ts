@@ -1,6 +1,6 @@
-import type { PairingEnvelope } from "@gryt/crypto";
+import type { HistoryRecord, PairingEnvelope } from "@gryt/crypto";
 
-import type { MlsAddOwnDeviceOptions, MlsOwnDeviceAdd } from "../mls/interfaces.js";
+import type { MlsAddOwnDeviceOptions, MlsGroupPosition, MlsOwnDeviceAdd } from "../mls/interfaces.js";
 
 /* What each app implements for linking a device (GRYT-1484). The protocol is
    docs/pairing-design.md in Gryt-chat/crypto; the relay is /api/v1/pairing on id.gryt.chat. */
@@ -69,7 +69,11 @@ export interface PairedServerDevice {
 
 /** A's DM driver on one server, or undefined when A isn't on it. */
 export type OwnDeviceAdder = (host: string) =>
-  | { addOwnDevice(deviceId: string, options?: MlsAddOwnDeviceOptions): Promise<MlsOwnDeviceAdd[]> }
+  | {
+      addOwnDevice(deviceId: string, options?: MlsAddOwnDeviceOptions): Promise<MlsOwnDeviceAdd[]>;
+      /** Where the history snapshot stops in each group; the tail starts after it. */
+      groupPositions(): Promise<MlsGroupPosition[]>;
+    }
   | undefined;
 
 /** Why a pairing stopped. `approve:<error>` carries the extension's own error code for anything
@@ -90,6 +94,8 @@ export type PairingEndReason =
   | "wrong_account"
   | "sign_in_failed"
   | "relay_error"
+  /** N's archive refused the history it was handed. Keys and sign-in are in place. */
+  | "history_failed"
   /** The approve endpoint says this user_code already got its one answer. */
   | "code_used"
   /** The approve endpoint says the user_code isn't valid any more: unknown, expired, or not pending. */
@@ -103,3 +109,56 @@ export type PairingEndReason =
   /** The device grant's user_code ran out before anyone answered it. */
   | "expired_token"
   | `approve:${string}`;
+
+/** A conversation in A's archive. `count` feeds the progress total, so leave it off rather than guess. */
+export interface HistoryConversation {
+  scope: string;
+  conversationId: string;
+  count?: number;
+}
+
+/** Where a page of the archive stops: the oldest record in it. */
+export interface HistoryCursor {
+  sentAt: number;
+  messageId: string;
+}
+
+/** A's archive, read for the history snapshot. Records are @gryt/crypto's HistoryRecord. */
+export interface HistoryArchive {
+  conversations(): Promise<HistoryConversation[]>;
+  /** Up to `limit` records sent before `before` (by sentAt, then messageId), in any order. */
+  page(scope: string, conversationId: string, options: { before?: HistoryCursor; limit: number }): Promise<HistoryRecord[]>;
+}
+
+/** N's archive. Core hands it each message id once; a record for an id N already holds replaces it. */
+export interface HistorySink {
+  put(records: HistoryRecord[]): Promise<void>;
+}
+
+/** How a history transfer is going, on either side. */
+export interface HistoryProgress {
+  /** A: messages uploaded and listed. N: messages stored. */
+  messages: number;
+  /** A: from the archive's counts. N: what A said it would send. Null when nobody knows yet. */
+  total: number | null;
+  /** Chunks uploaded (A) or fetched and stored (N), out of `listed`. */
+  chunks: number;
+  listed: number;
+  /** N only: chunks the relay no longer has, and chunks that failed their manifest check. */
+  missing: number;
+  refused: number;
+  /** The relay's cap stopped the snapshot early; the oldest messages stayed behind. */
+  truncated: boolean;
+  /** The oldest message time sent so far, so N can say how far back it has. */
+  oldest: number | null;
+  complete: boolean;
+}
+
+/** A message A archived from MLS, received or sent, with where it sits in its group's log. */
+export interface HistoryNotedMessage {
+  host: string;
+  conversationId: string;
+  seq: number;
+  epoch: number;
+  record: HistoryRecord;
+}

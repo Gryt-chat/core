@@ -17,8 +17,11 @@ import {
 import { sha256 } from "@noble/hashes/sha2.js";
 import { randomBytes } from "@noble/hashes/utils.js";
 
-import { mailbox, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
+import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
+import { createHistoryReceiver } from "./historyReceiver.ts";
 import type {
+  HistoryProgress,
+  HistorySink,
   PairedServerDevice,
   PairingClock,
   PairingDeviceInfo,
@@ -51,11 +54,16 @@ export interface NewDeviceOptions {
   /** Only for a server with its own auth server: goes in the QR for A to check against its own. */
   relayOrigin?: string;
   approvalMs?: number;
+  /** N's archive. Without it, history A sends is left on the relay. */
+  history?: HistorySink;
 }
 
 export interface NewDevicePairing {
   readonly state: NewDeviceState;
   subscribe(listener: (state: NewDeviceState) => void): () => void;
+  /** Null until the envelope brings a history key, or with no sink. */
+  readonly history: HistoryProgress | null;
+  subscribeHistory(listener: (progress: HistoryProgress) => void): () => void;
   start(): void;
   /** In `joining`: N's device on each server, once its KeyPackages are up. */
   ready(devices: PairedServerDevice[]): Promise<void>;
@@ -78,6 +86,13 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
   const abort = new AbortController();
   let state: NewDeviceState = { phase: "idle" };
   let current: { id: string; token: string; box: ReturnType<typeof mailbox>; session?: PairingSession } | null = null;
+  let receiver: ReturnType<typeof createHistoryReceiver> | null = null;
+  let history: HistoryProgress | null = null;
+  const historyListeners = new Set<(progress: HistoryProgress) => void>();
+  const setHistory = (progress: HistoryProgress) => {
+    history = progress;
+    for (const l of historyListeners) l(progress);
+  };
 
   const set = (next: NewDeviceState) => {
     if (state.phase === "ended" || state.phase === "done") return;
@@ -201,22 +216,49 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       const envelope = outcome;
       const tokens = envelope.account ? await signIn(envelope.account, envelope.from) : null;
       await storage.commit(envelope, tokens);
+      if (envelope.history && options.history) {
+        const { id, token } = current!;
+        receiver = createHistoryReceiver({
+          relay, id, token, key: envelope.history.key, sink: options.history, clock, signal: abort.signal, onProgress: setHistory,
+        });
+        receiver.listManifest(envelope.history.manifest.chunks);
+      }
       set({ phase: "joining", servers: envelope.servers, from: envelope.from });
     } catch (e) {
       if (!abort.signal.aborted) await end(reasonFor(e));
     }
   }
 
+  /** Reads A's history messages until every chunk is in, or A closing is the finish. */
   async function linked(from: string) {
+    const { box, session } = current!;
+    const stop = new AbortController();
+    const onAbort = () => stop.abort();
+    abort.signal.addEventListener("abort", onAbort, { once: true });
+    let failed = false;
+    receiver?.done.then(onAbort, () => ((failed = true), onAbort()));
     try {
-      // History from A lands here in a later version. Until then, A closing is the finish.
-      while (await current!.box.next(abort.signal));
+      for (;;) {
+        const body = openJson(session!, await box.next(stop.signal), "history");
+        if (receiver) receiver.list(body);
+        // No sink here: nothing to fetch, so A's last message is the finish.
+        else if (body.final === true) throw (stop.abort(), new Error("finished"));
+      }
     } catch (e) {
       if (abort.signal.aborted) return;
+      if (failed) return end("history_failed");
+      if (stop.signal.aborted) {
+        set({ phase: "done", from });
+        session?.close();
+        return void (await closeQuietly());
+      }
       const reason = reasonFor(e);
       if (reason !== "cancelled_by_other" && reason !== "expired") return end(reason);
+      receiver?.abandon();
       set({ phase: "done", from });
-      current?.session?.close();
+      session?.close();
+    } finally {
+      abort.signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -227,6 +269,13 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     subscribe(listener) {
       listeners.add(listener);
       return () => void listeners.delete(listener);
+    },
+    get history() {
+      return history;
+    },
+    subscribeHistory(listener) {
+      historyListeners.add(listener);
+      return () => void historyListeners.delete(listener);
     },
     start() {
       if (state.phase !== "idle") throw new Error("This pairing has started already.");

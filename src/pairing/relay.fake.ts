@@ -17,7 +17,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import type { PairingClock, PairingFetch, PairingOidc } from "./interfaces.ts";
 
 /* In-memory stand-ins for the relay in auth#45 and the approve endpoint in auth#46, same
-   statuses and error codes. Only what the pairing client touches. */
+   statuses and error codes. Chunks follow docs/pairing-design.md, since the relay has none yet. */
 
 export class FakeClock implements PairingClock {
   t = 1_800_000_000_000;
@@ -60,6 +60,8 @@ interface Session {
   sent: Record<Side, Msg[]>;
   seq: Record<Side, number>;
   waiters: Set<() => void>;
+  posted: number;
+  chunks: Map<number, { body: string; fetches: number }>;
   mitm?: { toA: PairingKey; toN: PairingKey; realCommit: string; pkA?: string; n?: PairingSession; a?: PairingSession };
 }
 
@@ -97,6 +99,8 @@ export class FakeRelay {
     try {
       if (init.method === "POST" && path === "") return reply(201, this.create(body.commit));
       if (init.method === "POST" && path === "/claim") return reply(200, this.claim(body));
+      const chunk = path.match(/^\/([^/]+)\/chunks\/(\d+)$/);
+      if (chunk) return this.chunk(init.method, chunk[1], Number(chunk[2]), token, body);
       const [, id, rest] = path.match(/^\/([^/]+)(\/messages)?$/) ?? [];
       if (init.method === "POST" && rest) return reply(201, this.post(id, token, body));
       if (init.method === "GET" && rest) {
@@ -118,7 +122,7 @@ export class FakeRelay {
     const s: Session = {
       id, code, commit, tokens: { n: token, a: null }, state: "open",
       expiresAt: this.clock.now() + 5 * 60_000, claimedAt: 0,
-      sent: { n: [], a: [] }, seq: { n: 0, a: 0 }, waiters: new Set(),
+      sent: { n: [], a: [] }, seq: { n: 0, a: 0 }, waiters: new Set(), posted: 0, chunks: new Map(),
     };
     if (this.mitm) {
       const toA = createPairingKey();
@@ -147,6 +151,7 @@ export class FakeRelay {
 
   private post(id: string, token: string | undefined, m: { type: string; pkN?: string; body?: string }) {
     const { s, side } = this.find(id, token);
+    if (++s.posted > 64) throw new Refusal(429, "too_many_messages");
     if (m.type === "reveal") {
       if (side !== "n" || s.state !== "claimed") throw new Refusal(409, "already_revealed");
       if (s.mitm) {
@@ -169,6 +174,43 @@ export class FakeRelay {
       body = base64Url(to.seal(plain));
     }
     return this.push(s, side, { type: "sealed", body });
+  }
+
+  /** Chunks, by slot. A puts, N gets and deletes; a chunk goes after its second fetch. */
+  private chunk(method: string, id: string, n: number, token: string | undefined, body: { body?: string }) {
+    const { s, side } = this.find(id, token);
+    if (method === "PUT") {
+      if (side !== "a") throw new Refusal(403, "wrong_side");
+      if (s.state === "open" || s.state === "claimed") throw new Refusal(409, "not_revealed");
+      if (typeof body.body !== "string" || s.chunks.has(n)) throw new Refusal(409, "exists");
+      this.chunkPuts++;
+      if (this.chunkBytes + body.body.length > this.chunkCap) throw new Refusal(507, "full");
+      this.chunkBytes += body.body.length;
+      s.chunks.set(n, { body: body.body, fetches: 0 });
+      return reply(201, {});
+    }
+    if (side !== "n") throw new Refusal(403, "wrong_side");
+    const stored = s.chunks.get(n);
+    if (method === "DELETE") return s.chunks.delete(n), reply(204, null);
+    if (method !== "GET" || !stored) throw new Refusal(404, "not_found");
+    if (++stored.fetches >= 2) s.chunks.delete(n);
+    this.chunkGets++;
+    const served = this.serveChunk ? this.serveChunk(n, stored.body) : stored.body;
+    if (served === null) throw new Refusal(404, "not_found");
+    return reply(200, { body: served });
+  }
+
+  /** What the relay hands N for slot `n`: changed, or null for "not found". */
+  serveChunk: ((n: number, body: string) => string | null) | null = null;
+  chunkPuts = 0;
+  chunkGets = 0;
+  chunkBytes = 0;
+  /** Stored chunk text across every session, as the relay's 2 GiB cap would count it. */
+  chunkCap = Infinity;
+
+  /** A session's stored chunks, for a test to damage or drop. */
+  chunksOf(id: string) {
+    return this.sessions.get(id)!.chunks;
   }
 
   /** Delivers a sealed body as if `side` had sent it: a replay, from the relay's seat. */

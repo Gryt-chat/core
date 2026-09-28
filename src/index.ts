@@ -148,6 +148,12 @@ export { createPairingRelay, PairingRelayError, type PairingRelay } from "./pair
 export type {
   DeviceAuthorization,
   DeviceTokenPoll,
+  HistoryArchive,
+  HistoryConversation,
+  HistoryCursor,
+  HistoryNotedMessage,
+  HistoryProgress,
+  HistorySink,
   OwnDeviceAdder,
   PairedServerDevice,
   PairingClock,
