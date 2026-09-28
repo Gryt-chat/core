@@ -102,6 +102,7 @@ export {
   MLS_DM_CONTENT_VERSION,
   type MlsDmContent,
 } from "./mls/content.js";
+export { applyMlsReaction, mlsReactionAction, type MlsReaction } from "./mls/reactions.js";
 export type {
   DmSealingMode,
   MlsClaimedKeyPackage,

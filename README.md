@@ -53,7 +53,9 @@ goes missing **and** when one appears that nobody listed.
   the interfaces in `src/mls/interfaces.ts`. `mlsPinsFromPeerPins` builds the
   pins from the peer pins `@gryt/crypto` already keeps.
   `encodeMlsDmContent` and `decodeMlsDmContent` write and read what goes inside
-  each message, so both apps use the same JSON. It's the one module with a
+  each message, so both apps use the same JSON: a message, an edit, a delete or
+  a reaction. `applyMlsReaction` puts a reaction on a message in the archive,
+  since the server never sees one. It's the one module with a
   dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
 
 ## What deliberately isn't

@@ -69,6 +69,8 @@ const REQUIRED = [
   "decodeMlsDmContent",
   "encodeMlsDmContent",
   "MLS_DM_CONTENT_VERSION",
+  "applyMlsReaction",
+  "mlsReactionAction",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -97,6 +99,7 @@ const REQUIRED_TYPES = [
   "MlsStateStore",
   "MlsTransport",
   "MlsDmContent",
+  "MlsReaction",
 ];
 
 const dist = resolve("dist/index.js");
