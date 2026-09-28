@@ -14,8 +14,12 @@ import {
 } from "@gryt/crypto";
 
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.js";
-import { mailbox, openJson, PairingEnded, reasonFor, systemClock } from "./channel.ts";
+import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
+import { createHistorySender, createTailRecorder, type HistoryMessage } from "./historySender.ts";
 import type {
+  HistoryArchive,
+  HistoryNotedMessage,
+  HistoryProgress,
   OwnDeviceAdder,
   PairedServerDevice,
   PairingClock,
@@ -44,6 +48,8 @@ export type ApproverState =
   | { phase: "browser"; device: PairingDeviceInfo; url: string }
   | { phase: "waiting_ready"; device: PairingDeviceInfo }
   | { phase: "adding"; device: PairingDeviceInfo; host: string; done: number; total: number }
+  /** N is in every conversation; the history's tail is still going. Progress is on `history`. */
+  | { phase: "sending"; device: PairingDeviceInfo; added: Record<string, MlsOwnDeviceAdd[]> }
   | { phase: "done"; device: PairingDeviceInfo; added: Record<string, MlsOwnDeviceAdd[]> }
   | { phase: "ended"; reason: PairingEndReason };
 
@@ -56,11 +62,20 @@ export interface ApproverOptions {
   devices: OwnDeviceAdder;
   clock?: PairingClock;
   approvalMs?: number;
+  /** A's archive. Without it, no history goes across. */
+  history?: HistoryArchive;
+  /** How long after the adds A keeps collecting old-epoch messages for the last tail. */
+  lateWindowMs?: number;
 }
 
 export interface ApproverPairing {
   readonly state: ApproverState;
   subscribe(listener: (state: ApproverState) => void): () => void;
+  /** Null until Approve, or with no archive. */
+  readonly history: HistoryProgress | null;
+  subscribeHistory(listener: (progress: HistoryProgress) => void): () => void;
+  /** Every MLS message A archives while this runs, received or sent, for the tail. */
+  noteMessage(message: HistoryNotedMessage): void;
   /** A scanned QR, or a typed code. */
   claim(input: { qr: string } | { code: string }): void;
   /** For an account, `accessToken` refreshes first: the extension refuses a token over 60 seconds old. */
@@ -71,6 +86,9 @@ export interface ApproverPairing {
 }
 
 const NOT_LISTED_RETRIES = 5;
+/** How long Approve may spend sealing history before the envelope goes, so it lands in N's window. */
+const ENVELOPE_BUDGET_MS = 5_000;
+const HISTORY_LATE_WINDOW_MS = 60_000;
 
 /** auth#46's codes that get a named reason. Anything else it can answer still falls
     through to the generic `approve:<code>`. */
@@ -95,6 +113,14 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
   let current: { id: string; token: string; box: ReturnType<typeof mailbox>; session?: PairingSession } | null = null;
   let device: PairingDeviceInfo | null = null;
   let confirming: AbortController | null = null;
+  let deadline = 0;
+  let history: HistoryProgress | null = null;
+  const historyListeners = new Set<(progress: HistoryProgress) => void>();
+  const tail = createTailRecorder();
+  const setHistory = (progress: HistoryProgress) => {
+    history = progress;
+    for (const l of historyListeners) l(progress);
+  };
 
   const set = (next: ApproverState) => {
     if (state.phase === "ended" || state.phase === "done") return;
@@ -153,7 +179,7 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     const hello = openJson(current.session, await box.next(abort.signal, clock.now() + approvalMs), "hello");
     const text = (v: unknown) => (typeof v === "string" ? v.slice(0, 100) : "");
     device = { name: text(hello.name), app: text(hello.app), platform: text(hello.platform) };
-    const deadline = clock.now() + approvalMs;
+    deadline = clock.now() + approvalMs;
     set({ phase: "confirming", device, location: claimed.location, yourLocation: claimed.yourLocation, emoji: current.session.emoji, deadline });
 
     // N sends nothing more until A approves, so a message or a close here means something's off.
@@ -206,9 +232,39 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     return added;
   }
 
+  /** Each group's cursor on every server in the envelope: the snapshot covers up to there. */
+  async function positions(envelope: PairingEnvelope) {
+    const snap = new Map<string, Map<string, number>>();
+    for (const { host } of envelope.servers) {
+      const driver = devices(host);
+      if (driver) snap.set(host, new Map((await driver.groupPositions()).map((p) => [p.conversationId, p.seq])));
+    }
+    return snap;
+  }
+
+  function startHistory(archive: HistoryArchive) {
+    const { id, token, session } = current!;
+    return createHistorySender({
+      relay, id, token, archive, clock, signal: abort.signal,
+      post: (message: HistoryMessage) =>
+        relay.post(id, token, { type: "sealed", body: sealJson(session!, message as unknown as Record<string, unknown>) }),
+      onProgress: setHistory,
+    });
+  }
+
   async function approve(envelope: PairingEnvelope, accessToken?: () => Promise<string>) {
     const { id, token, box, session } = current!;
     set({ phase: envelope.account ? "signing_in" : "waiting_ready", device: device! });
+    let sender: ReturnType<typeof createHistorySender> | null = null;
+    let snap = new Map<string, Map<string, number>>();
+    if (options.history) {
+      // Recording starts before the positions are read, so nothing lands between the two unseen.
+      tail.start();
+      snap = await positions(envelope);
+      sender = startHistory(options.history);
+      const chunks = await sender.forEnvelope(Math.min(clock.now() + ENVELOPE_BUDGET_MS, deadline - 10_000));
+      envelope = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks } } };
+    }
     await relay.post(id, token, { type: "sealed", body: base64Url(session!.seal(encodePairingEnvelope(envelope))) });
 
     if (envelope.account && accessToken) {
@@ -227,10 +283,21 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     const named = list.filter(
       (d): d is PairedServerDevice => typeof d?.host === "string" && typeof d?.deviceId === "string",
     );
+    sender?.startPaging();
     const added = await addEverywhere(named);
+    if (!sender) {
+      set({ phase: "done", device: device!, added });
+      session!.close();
+      return void (await closeQuietly());
+    }
+
+    set({ phase: "sending", device: device!, added });
+    await sender.send(tail.take(snap, added), false);
+    await clock.sleep(options.lateWindowMs ?? HISTORY_LATE_WINDOW_MS, abort.signal);
+    await sender.send(tail.take(snap, added), true);
+    // N closes the session once it has every chunk; closing here would delete them.
     set({ phase: "done", device: device!, added });
     session!.close();
-    await closeQuietly();
   }
 
   return {
@@ -241,6 +308,14 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
+    get history() {
+      return history;
+    },
+    subscribeHistory(listener) {
+      historyListeners.add(listener);
+      return () => void historyListeners.delete(listener);
+    },
+    noteMessage: (message) => tail.note(message),
     claim(input) {
       if (state.phase !== "idle") throw new Error("This pairing has claimed a session already.");
       claim(input).catch(fail);

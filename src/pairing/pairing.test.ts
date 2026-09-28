@@ -42,6 +42,7 @@ function setup(options: { mitm?: boolean } = {}) {
           opts?.onProgress?.({ done: 1, total: 1, result });
           return [result];
         },
+        groupPositions: async () => [],
       }),
     });
 

@@ -71,7 +71,16 @@ goes missing **and** when one appears that nobody listed.
   extension, and adds the new device to every DM. If the extension isn't there,
   it hands back Keycloak's own device page to open instead. The app passes in
   `fetch`, a clock, storage and the OIDC calls through
-  `src/pairing/interfaces.ts`. History isn't in it yet. It uses
+  `src/pairing/interfaces.ts`. When the app passes its archive, history goes
+  across too. On Approve, A notes where each group's log stands, reads the
+  archive newest day first through `HistoryArchive`, and seals and uploads it
+  in chunks. The envelope carries the history key and the first chunks, and
+  later sealed messages list the rest. After the adds, A sends the tail: what
+  it decrypted between the snapshot and each add, plus old-epoch messages that
+  land after it, which the app reports with `noteMessage`. N fetches the chunks
+  newest first, checks each against its manifest entry, and hands each message
+  to `HistorySink` once. Both sides report progress through
+  `subscribeHistory`. It uses
   `@noble/hashes` for the PKCE challenge, which `@gryt/crypto` already pulls in.
 
 ## What deliberately isn't

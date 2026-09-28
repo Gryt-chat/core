@@ -114,6 +114,10 @@ const REQUIRED_TYPES = [
   "PairingEndReason",
   "PairingOidc",
   "PairingStorage",
+  "HistoryArchive",
+  "HistoryNotedMessage",
+  "HistoryProgress",
+  "HistorySink",
 ];
 
 const dist = resolve("dist/index.js");
