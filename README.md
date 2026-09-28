@@ -51,8 +51,10 @@ goes missing **and** when one appears that nobody listed.
   topped up, opens a DM group, joins from a Welcome, sends, and reads the group
   log in order. Each app hands it the socket, the storage and the pins through
   the interfaces in `src/mls/interfaces.ts`. `mlsPinsFromPeerPins` builds the
-  pins from the peer pins `@gryt/crypto` already keeps. It's the one module with
-  a dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
+  pins from the peer pins `@gryt/crypto` already keeps.
+  `encodeMlsDmContent` and `decodeMlsDmContent` write and read what goes inside
+  each message, so both apps use the same JSON. It's the one module with a
+  dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
 
 ## What deliberately isn't
 

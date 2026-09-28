@@ -66,6 +66,9 @@ const REQUIRED = [
   "createMlsDmDriver",
   "MlsDriverError",
   "mlsPinsFromPeerPins",
+  "decodeMlsDmContent",
+  "encodeMlsDmContent",
+  "MLS_DM_CONTENT_VERSION",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -93,6 +96,7 @@ const REQUIRED_TYPES = [
   "MlsPins",
   "MlsStateStore",
   "MlsTransport",
+  "MlsDmContent",
 ];
 
 const dist = resolve("dist/index.js");
