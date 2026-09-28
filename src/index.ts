@@ -130,3 +130,31 @@ export type {
   MlsTransport,
   MlsWelcomeDelivery,
 } from "./mls/interfaces.js";
+
+export {
+  createApproverPairing,
+  type ApproverOptions,
+  type ApproverPairing,
+  type ApproverState,
+} from "./pairing/approver.js";
+export {
+  createNewDevicePairing,
+  PAIRING_APPROVAL_MS,
+  type NewDeviceOptions,
+  type NewDevicePairing,
+  type NewDeviceState,
+} from "./pairing/newDevice.js";
+export { createPairingRelay, PairingRelayError, type PairingRelay } from "./pairing/relayClient.js";
+export type {
+  DeviceAuthorization,
+  DeviceTokenPoll,
+  OwnDeviceAdder,
+  PairedServerDevice,
+  PairingClock,
+  PairingDeviceInfo,
+  PairingEndReason,
+  PairingFetch,
+  PairingOidc,
+  PairingStorage,
+  PairingTokens,
+} from "./pairing/interfaces.js";

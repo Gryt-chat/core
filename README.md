@@ -59,8 +59,20 @@ goes missing **and** when one appears that nobody listed.
   each message, so both apps use the same JSON: a message, an edit, a delete or
   a reaction. `readMlsDmContent` also says when something came from a newer app,
   so it can be skipped quietly rather than counted as broken. `applyMlsReaction` puts a reaction on a message in the archive,
-  since the server never sees one. It's the one module with a
-  dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
+  since the server never sees one. It depends on `@gryt/crypto`, pinned
+  exactly the way the apps pin it.
+- **`pairing`** — linking a new device by QR code or short code, as
+  `docs/pairing-design.md` in `@gryt/crypto` lays it out. There's one state
+  machine per side. `createNewDevicePairing` shows the QR and code, checks the
+  emoji, opens the envelope and, for an account, signs in with the device grant
+  and checks the ID token is for the right person. It writes nothing until all
+  of that passes. `createApproverPairing` claims the session, shows who's
+  asking, seals the envelope, approves the sign-in through the Keycloak
+  extension, and adds the new device to every DM. If the extension isn't there,
+  it hands back Keycloak's own device page to open instead. The app passes in
+  `fetch`, a clock, storage and the OIDC calls through
+  `src/pairing/interfaces.ts`. History isn't in it yet. It uses
+  `@noble/hashes` for the PKCE challenge, which `@gryt/crypto` already pulls in.
 
 ## What deliberately isn't
 
