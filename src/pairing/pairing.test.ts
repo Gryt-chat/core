@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { asIdentityScope, type PairingEnvelope } from "@gryt/crypto";
+import { asIdentityScope, formatPairingQr, type PairingEnvelope } from "@gryt/crypto";
 
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.ts";
 import { createApproverPairing, type ApproverPairing } from "./approver.ts";
@@ -363,7 +363,7 @@ describe("timeouts, cancelling and a second scan", () => {
   it("refuses a QR that names another relay", async () => {
     const env = setup();
     const a = env.approver();
-    a.claim({ qr: "GRYT:1:0000000000000000000000000G:00000000000000000000000000000000000000000000000000G0:HTTPS://EVIL.EXAMPLE" });
+    a.claim({ qr: formatPairingQr({ sessionId: new Uint8Array(16), publicKey: new Uint8Array(32), relayOrigin: "https://evil.example" }) });
     await env.until(() => phase(a) === "ended");
     assert.deepEqual(a.state, { phase: "ended", reason: "wrong_relay" });
   });
