@@ -57,6 +57,10 @@ export class FakeDeliveryService {
   scope: IdentityScope;
   conversations = new Map<string, string[]>();
   devices = new Map<string, string[]>();
+  /** Ids their owner removed, as `${serverUserId}:${deviceId}`. Anything naming one is refused (GRYT-1555). */
+  removed = new Set<string>();
+  /** Every call that named a device, in order, by device id. */
+  callsBy = new Map<string, string[]>();
   /** When each device id first published, as `mls:devices` reports it. */
   deviceAddedAt = new Map<string, string>();
   keyPackages: KeyPackageRow[] = [];
@@ -210,6 +214,7 @@ export class FakeDeliveryService {
         await tick();
         if (!this.isDevice(me, deviceId)) return fail("unknown_device", "Publish KeyPackages from this device first.");
         this.devices.set(me, (this.devices.get(me) ?? []).filter((d) => d !== deviceId));
+        this.removed.add(`${me}:${deviceId}`);
         this.keyPackages = this.keyPackages.filter((k) => !(k.serverUserId === me && k.deviceId === deviceId));
         this.welcomes = this.welcomes.filter((w) => !(w.serverUserId === me && w.deviceId === deviceId));
         this.push(this.peopleSharing(me), (d) => d.handleDevicesChanged({ serverUserId: me }));
@@ -308,6 +313,14 @@ export class FakeDeliveryService {
     for (const [name, method] of Object.entries(methods) as [string, (req: unknown) => Promise<unknown>][]) {
       guarded[name] = async (req) => {
         this.checkParts(socket, name, req);
+        const deviceId = (req as { deviceId?: unknown })?.deviceId;
+        if (typeof deviceId === "string") {
+          this.callsBy.set(deviceId, [...(this.callsBy.get(deviceId) ?? []), name]);
+          if (this.removed.has(`${me}:${deviceId}`)) {
+            await tick();
+            return fail("device_removed", "You removed this device from encrypted messages here.");
+          }
+        }
         const reply = await method(req);
         this.checkParts(socket, name, reply);
         return reply;

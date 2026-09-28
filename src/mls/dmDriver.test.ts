@@ -43,10 +43,16 @@ function pinStore(people: string[], withPersonKey: string[]) {
   return { store, pinPerson };
 }
 
-type DeviceOptions = { seed?: Uint8Array; capability?: MlsServerCapability | null; unpinned?: string[] };
+type DeviceOptions = {
+  seed?: Uint8Array;
+  capability?: MlsServerCapability | null;
+  unpinned?: string[];
+  store?: MemoryMlsStore;
+};
 
 function device(fake: FakeDeliveryService, who: string, name: string, opts: DeviceOptions = {}) {
-  const store = new MemoryMlsStore();
+  const store = opts.store ?? new MemoryMlsStore();
+  const removed: number[] = [];
   const messages: MlsDecryptedMessage[] = [];
   const lost: { conversationId: string; reason: string }[] = [];
   const undecryptable: { conversationId: string; seq: number; reason: string }[] = [];
@@ -73,12 +79,13 @@ function device(fake: FakeDeliveryService, who: string, name: string, opts: Devi
       onMessage: (m) => void messages.push(m),
       onGroupLost: (i) => void lost.push(i),
       onUndecryptable: (i) => void undecryptable.push(i),
+      onDeviceRemoved: () => void removed.push(Date.now()),
     },
     newDevice: () => createMlsDevice({ seed, scope: SCOPE, deviceName: name }),
   });
   socket.driver = driver;
   const texts = () => messages.map((m) => `${m.senderServerUserId}: ${new TextDecoder().decode(m.plaintext)}`);
-  return { driver, store, messages, lost, undecryptable, seen, socket, texts, pinPerson: pins.pinPerson };
+  return { driver, store, messages, lost, undecryptable, removed, seen, socket, texts, pinPerson: pins.pinPerson };
 }
 
 /* A package for `d` made as if the clock said `at`, put first in line for its device. */
@@ -277,6 +284,41 @@ describe("MLS DM driver", () => {
 
     assert.deepEqual(phone.lost, [{ conversationId: dm, reason: "removed" }]);
     assert.equal(fake.groups.get(dm)!.log.at(-1)!.senderDeviceId, laptop.store.device!.deviceId);
+  });
+
+  it("stops a stolen phone for good once it's removed, online or on reconnect (GRYT-1555)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const laptop = device(fake, "kari", "laptop");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    for (const d of [laptop, phone, ola]) await d.driver.start();
+    await laptop.driver.send(dm, "ola", text("before"));
+    await fake.settle();
+    const phoneId = phone.store.device!.deviceId;
+
+    // Removed while it's online: the devices push is how it finds out.
+    await laptop.driver.removeOwnDevice(phoneId);
+    await fake.settle();
+    assert.equal(phone.removed.length, 1);
+    assert.deepEqual(phone.lost, [{ conversationId: dm, reason: "removed" }]);
+
+    // The same driver asks nothing more of the server.
+    const called = fake.callsBy.get(phoneId)!.length;
+    await assert.rejects(phone.driver.start(), { code: "device_removed" });
+    assert.equal(fake.callsBy.get(phoneId)!.length, called);
+
+    // Reconnecting with its state still there gets one refused sync, and never publishes.
+    const reconnected = device(fake, "kari", "phone", { store: phone.store });
+    await assert.rejects(reconnected.driver.start(), { code: "device_removed" });
+    assert.equal(reconnected.removed.length, 1);
+    assert.deepEqual(fake.callsBy.get(phoneId)!.slice(called), ["sync"]);
+
+    await ola.driver.send(dm, "kari", text("after"));
+    await fake.settle();
+    assert.deepEqual(laptop.texts(), ["ola: after"]);
+    assert.deepEqual(phone.texts(), ["kari: before"]);
+    assert.deepEqual(fake.welcomes.filter((w) => w.deviceId === phoneId), [], "and nobody adds it back");
   });
 
   it("lists your own devices with the names their certificates carry", async () => {

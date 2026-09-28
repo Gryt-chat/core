@@ -225,6 +225,11 @@ export interface MlsDmEvents {
   /** This device is out of the group: removed, or its state couldn't keep up. */
   onGroupLost?(info: { conversationId: string; reason: "removed" | "out_of_sync" | "gap" }): void;
   onJoined?(info: { conversationId: string; groupId: string }): void;
+  /**
+   * The server says this device was removed here (`device_removed`). The driver has stopped for
+   * good. Wipe this server's MLS state, and don't make a new device until the person asks.
+   */
+  onDeviceRemoved?(): void;
 }
 
 /** Decision 4, per DM. `refused` never falls back to version 1. */
