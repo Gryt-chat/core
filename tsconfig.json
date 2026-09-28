@@ -17,6 +17,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "declaration": true,
+    "rewriteRelativeImportExtensions": true,
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,

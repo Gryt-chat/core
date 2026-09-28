@@ -72,6 +72,12 @@ const REQUIRED = [
   "readMlsDmContent",
   "applyMlsReaction",
   "mlsReactionAction",
+  // pairing
+  "createApproverPairing",
+  "createNewDevicePairing",
+  "createPairingRelay",
+  "PAIRING_APPROVAL_MS",
+  "PairingRelayError",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
@@ -101,6 +107,13 @@ const REQUIRED_TYPES = [
   "MlsTransport",
   "MlsDmContent",
   "MlsReaction",
+  "ApproverPairing",
+  "ApproverState",
+  "NewDevicePairing",
+  "NewDeviceState",
+  "PairingEndReason",
+  "PairingOidc",
+  "PairingStorage",
 ];
 
 const dist = resolve("dist/index.js");
