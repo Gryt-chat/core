@@ -208,6 +208,8 @@ export interface MlsPins {
 export interface MlsDecryptedMessage {
   conversationId: string;
   seq: number;
+  /** The epoch it was sent in. A pairing tail wants the old-epoch ones that land after an add. */
+  epoch: number;
   senderServerUserId: string;
   senderDeviceId: string;
   plaintext: Uint8Array;
@@ -250,6 +252,35 @@ export interface MlsOwnDevice extends MlsDeviceRef {
   thisDevice: boolean;
 }
 
+/** A place in one group's log: a seq, and the epoch this device is in there. */
+export interface MlsGroupPosition {
+  conversationId: string;
+  groupId: string;
+  seq: number;
+  epoch: number;
+}
+
+/**
+ * Where one of your devices joined one group. `add` is the commit's seq and the epoch the device
+ * starts in, or null when it didn't go in, or went in before this driver was running.
+ */
+export interface MlsOwnDeviceAdd {
+  conversationId: string;
+  groupId: string;
+  /** "added_by_other" when another member's commit put it in first. */
+  outcome: "added" | "added_by_other" | "failed";
+  add: { seq: number; epoch: number } | null;
+  /** Why it failed: an MlsDriverError code, or "too_many_devices", "no_key_package" or "error". */
+  error?: string;
+}
+
+export interface MlsAddOwnDeviceOptions {
+  /** Conversation ids to do first, most recently active first. The rest follow. */
+  order?: readonly string[];
+  /** After each group, with how many are done. */
+  onProgress?(progress: { done: number; total: number; result: MlsOwnDeviceAdd }): void;
+}
+
 export interface MlsDmDriverOptions {
   transport: MlsTransport;
   store: MlsStateStore;
@@ -283,4 +314,11 @@ export interface MlsDmDriver {
   ownDevices(): Promise<MlsOwnDevice[]>;
   /** Your own devices only. Every group you share drops it on the next pass. */
   removeOwnDevice(deviceId: string): Promise<void>;
+  /** Pairing: each group's cursor now, which is what the history snapshot covers. */
+  groupPositions(): Promise<MlsGroupPosition[]>;
+  /**
+   * Pairing: adds one of your own new devices to every group now, and says where it went in.
+   * Throws `not_own_device` for a device the server doesn't list as yours, or not under your person key.
+   */
+  addOwnDevice(deviceId: string, options?: MlsAddOwnDeviceOptions): Promise<MlsOwnDeviceAdd[]>;
 }

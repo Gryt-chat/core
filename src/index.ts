@@ -106,6 +106,7 @@ export {
 export { applyMlsReaction, mlsReactionAction, type MlsReaction } from "./mls/reactions.js";
 export type {
   DmSealingMode,
+  MlsAddOwnDeviceOptions,
   MlsClaimedKeyPackage,
   MlsDecryptedMessage,
   MlsDeviceRecord,
@@ -113,12 +114,14 @@ export type {
   MlsDmDriver,
   MlsDmDriverOptions,
   MlsDmEvents,
+  MlsGroupPosition,
   MlsGroupRecord,
   MlsGroupView,
   MlsKeyPackageRecord,
   MlsListedDevice,
   MlsLogEntry,
   MlsOwnDevice,
+  MlsOwnDeviceAdd,
   MlsPins,
   MlsRefusal,
   MlsReply,

@@ -38,6 +38,7 @@ import type {
   MlsTransport,
   MlsWelcomeDelivery,
 } from "./interfaces.js";
+import type { MlsAddOwnDeviceOptions, MlsGroupPosition, MlsOwnDeviceAdd } from "./interfaces.js";
 
 /** Five devices per person per server (design, section 1). The server holds the same line. */
 const MLS_MAX_DEVICES_PER_PERSON = 5;
@@ -55,6 +56,7 @@ const RENEW_BEFORE_S = 7 * 86_400;
 
 export type MlsDriverErrorCode =
   | "refused"
+  | "not_own_device"
   | "no_device"
   | "waiting_for_welcome"
   | "not_in_group"
@@ -206,6 +208,19 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     await store.saveGroup(open.rec);
   }
 
+  /** Where each device went into each group, as this driver saw it happen. Memory only. */
+  const joins = new Map<string, Map<string, { seq: number; epoch: number; byThisDevice: boolean }>>();
+
+  function noteJoins(conversationId: string, before: MlsGroupState, after: MlsGroupState, seq: number, byThisDevice: boolean) {
+    if (before === after) return;
+    const had = new Set(mlsGroupMembers(before, scope).map((m) => m.certificate.deviceId));
+    const here = joins.get(conversationId) ?? new Map();
+    for (const { certificate } of mlsGroupMembers(after, scope)) {
+      if (!had.has(certificate.deviceId)) here.set(certificate.deviceId, { seq, epoch: epochOf(after), byThisDevice });
+    }
+    if (here.size) joins.set(conversationId, here);
+  }
+
   async function load(conversationId: string): Promise<Open | null> {
     const rec = await store.loadGroup(conversationId);
     return rec ? { rec, state: decodeMlsGroupState(rec.state, trustFor(conversationId)) } : null;
@@ -270,6 +285,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     const current = epochOf(open.state);
 
     if (e.kind === "commit") {
+      const before = open.state;
       const pending = open.rec.pending;
       if (pending && sameBytes(pending.commit, e.data)) {
         open.state = decodeMlsGroupState(pending.state, trustFor(open.rec.conversationId));
@@ -293,6 +309,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         }
       }
       open.rec = { ...open.rec, pending: undefined };
+      noteJoins(open.rec.conversationId, before, open.state, e.seq, !!pending && sameBytes(pending.commit, e.data));
       await notePeople(open.rec.conversationId, open.state);
     } else if (e.kind === "proposal") {
       if (e.epoch === current) {
@@ -316,6 +333,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         await events.onMessage({
           conversationId: open.rec.conversationId,
           seq: e.seq,
+          epoch: e.epoch,
           senderServerUserId: e.senderServerUserId,
           senderDeviceId: e.senderDeviceId,
           plaintext,
@@ -364,6 +382,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         welcome: c.welcome,
       });
       if (r.ok) {
+        noteJoins(open.rec.conversationId, open.state, c.state, r.seq, true);
         open.state = c.state;
         forgetMlsSecrets(c.consumed);
         open.rec = { ...open.rec, pending: undefined };
@@ -705,6 +724,105 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     }));
   }
 
+  // ── Pairing ─────────────────────────────────────────────────────────
+
+  async function groupPositions(): Promise<MlsGroupPosition[]> {
+    const out: MlsGroupPosition[] = [];
+    for (const rec of await store.listGroups()) {
+      const pos = await run(rec.conversationId, async () => {
+        const open = await load(rec.conversationId);
+        return open && { conversationId: open.rec.conversationId, groupId: open.rec.groupId, seq: open.rec.cursor, epoch: epochOf(open.state) };
+      });
+      if (pos) out.push(pos);
+    }
+    return out;
+  }
+
+  /** A claimed package for `deviceId`, checked to be yours under your own person key. Null when the server has none. */
+  async function claimOwn(conversationId: string, deviceId: string, ownPersonKey: Uint8Array): Promise<Uint8Array | null> {
+    const d = await ownDevice();
+    // One more claim when the first package won't read, as with a peer's.
+    for (let round = 0; round < 2; round++) {
+      const claim = await transport.claimKeyPackages({ conversationId, deviceId: d.deviceId, devices: [{ serverUserId: self, deviceId }] });
+      if (!claim.ok) throw refused("Claiming KeyPackages", claim);
+      const kp = claim.keyPackages.find((k) => k.serverUserId === self && k.deviceId === deviceId);
+      if (!kp) return null;
+      let certificate: DeviceCertificate;
+      try {
+        ({ certificate } = await readMlsKeyPackage(kp.keyPackage, scope));
+      } catch {
+        continue;
+      }
+      if (certificate.deviceId !== deviceId || !sameBytes(certificate.personPublicKey, ownPersonKey)) {
+        throw new MlsDriverError("not_own_device", "That device's certificate isn't signed by your person key.");
+      }
+      return kp.keyPackage;
+    }
+    return null;
+  }
+
+  async function addOwnDeviceTo(conversationId: string, deviceId: string, ownPersonKey: Uint8Array): Promise<MlsOwnDeviceAdd> {
+    const open = await load(conversationId);
+    const result = (outcome: MlsOwnDeviceAdd["outcome"], error?: string): MlsOwnDeviceAdd => {
+      const j = joins.get(conversationId)?.get(deviceId);
+      const add = outcome === "failed" || !j ? null : { seq: j.seq, epoch: j.epoch };
+      return { conversationId, groupId: open?.rec.groupId ?? "", outcome, add, ...(error ? { error } : {}) };
+    };
+    if (!open || !(await catchUp(open))) return result("failed", "not_in_group");
+    const inTree = (s: MlsGroupState) => mlsGroupMembers(s, scope).some((m) => m.certificate.deviceId === deviceId);
+    const settled = () => result(joins.get(conversationId)?.get(deviceId)?.byThisDevice ? "added" : "added_by_other");
+    if (inTree(open.state)) return settled();
+
+    let full = false;
+    for (let round = 0; round < 2 && !inTree(open.state); round++) {
+      const keyPackage = await claimOwn(conversationId, deviceId, ownPersonKey);
+      if (!keyPackage) return result("failed", "no_key_package");
+      let stale = false;
+      await commitWithRetry(open, async (s) => {
+        if (inTree(s)) return null;
+        const mine = mlsGroupMembers(s, scope).filter((m) => sameBytes(m.certificate.personPublicKey, ownPersonKey));
+        if ((full = mine.length >= MLS_MAX_DEVICES_PER_PERSON)) return null;
+        try {
+          return await addMlsMembers(s, [keyPackage]);
+        } catch {
+          stale = true;
+          return null;
+        }
+      });
+      if (!stale) break;
+    }
+    if (inTree(open.state)) return settled();
+    return result("failed", full ? "too_many_devices" : "no_key_package");
+  }
+
+  async function addOwnDevice(deviceId: string, options: MlsAddOwnDeviceOptions = {}): Promise<MlsOwnDeviceAdd[]> {
+    const d = await ownDevice();
+    const listed = await transport.listDevices({});
+    if (!listed.ok) throw refused("Listing devices", listed);
+    if (deviceId === d.deviceId || !listed.devices.some((x) => x.serverUserId === self && x.deviceId === deviceId)) {
+      throw new MlsDriverError("not_own_device", "The server doesn't list that device as one of yours.");
+    }
+    const ownPersonKey = readDeviceCertificate(d.certificate, scope).personPublicKey;
+
+    const ids = (await store.listGroups()).map((r) => r.conversationId);
+    const first = (options.order ?? []).filter((id) => ids.includes(id));
+    const ordered = [...new Set([...first, ...ids])];
+    const results: MlsOwnDeviceAdd[] = [];
+    for (const conversationId of ordered) {
+      let result: MlsOwnDeviceAdd;
+      try {
+        result = await run(conversationId, () => addOwnDeviceTo(conversationId, deviceId, ownPersonKey));
+      } catch (e) {
+        if (e instanceof MlsDriverError && e.code === "not_own_device") throw e;
+        const groupId = (await store.loadGroup(conversationId))?.groupId ?? "";
+        result = { conversationId, groupId, outcome: "failed", add: null, error: e instanceof MlsDriverError ? e.code : "error" };
+      }
+      results.push(result);
+      options.onProgress?.({ done: results.length, total: ordered.length, result });
+    }
+    return results;
+  }
+
   return {
     async start() {
       await ownDevice();
@@ -729,5 +847,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       if (!r.ok) throw refused("Removing the device", r);
       await handleDevicesChanged({ serverUserId: self });
     },
+    groupPositions,
+    addOwnDevice,
   };
 }

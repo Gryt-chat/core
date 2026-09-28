@@ -49,7 +49,10 @@ goes missing **and** when one appears that nobody listed.
   space on the phone, which is a key one of them could collide on.
 - **`mls`** — the DM half of MLS stage 1. It keeps a device's KeyPackages
   topped up, opens a DM group, joins from a Welcome, sends, and reads the group
-  log in order. Each app hands it the socket, the storage and the pins through
+  log in order. For linking a device, `addOwnDevice` puts a new device of yours
+  in every DM straight away and says where in each group's log it went in.
+  `groupPositions` says where each log stood when the history snapshot was
+  taken. Each app hands it the socket, the storage and the pins through
   the interfaces in `src/mls/interfaces.ts`. `mlsPinsFromPeerPins` builds the
   pins from the peer pins `@gryt/crypto` already keeps.
   `encodeMlsDmContent` and `decodeMlsDmContent` write and read what goes inside
