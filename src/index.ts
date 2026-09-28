@@ -93,3 +93,25 @@ export {
   TERMS_URL,
   TERMS_VERSION,
 } from "./terms/termsAgreement.js";
+
+export type {
+  DmSealingMode,
+  MlsClaimedKeyPackage,
+  MlsDecryptedMessage,
+  MlsDeviceRecord,
+  MlsDeviceRef,
+  MlsDmDriver,
+  MlsDmDriverOptions,
+  MlsDmEvents,
+  MlsGroupRecord,
+  MlsGroupView,
+  MlsKeyPackageRecord,
+  MlsLogEntry,
+  MlsPins,
+  MlsRefusal,
+  MlsReply,
+  MlsServerCapability,
+  MlsStateStore,
+  MlsTransport,
+  MlsWelcomeDelivery,
+} from "./mls/interfaces.js";
