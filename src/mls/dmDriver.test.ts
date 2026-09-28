@@ -6,6 +6,8 @@ import {
   createMlsDevice,
   derivePersonKeyPair,
   generateMlsKeyPackage,
+  openAttachment,
+  sealAttachment,
   pinPeerKey,
   pinPersonKey,
   readMlsKeyPackage,
@@ -15,6 +17,7 @@ import {
 } from "@gryt/crypto";
 
 import { FakeDeliveryService, MemoryMlsStore } from "./deliveryService.fake.ts";
+import { decodeMlsDmContent, encodeMlsDmContent } from "./content.ts";
 import { createMlsDmDriver, MlsDriverError } from "./dmDriver.ts";
 import type { MlsDecryptedMessage, MlsServerCapability } from "./interfaces.ts";
 import { mlsPinsFromPeerPins } from "./pins.ts";
@@ -412,6 +415,66 @@ describe("MLS DM driver", () => {
 
     assert.deepEqual(ola.texts(), ["kari: seen", "kari: kept"]);
     assert.deepEqual(ola.undecryptable, [{ conversationId: dm, seq: 3, reason: "gap" }]);
+  });
+
+  it("keeps every packet to ten binary parts, which is all socket.io takes", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const { transport } = fake.connect("nobody");
+    await assert.rejects(
+      transport.publishKeyPackages({ deviceId: "d", keyPackages: Array.from({ length: 11 }, () => new Uint8Array(1)) }),
+      /too many attachments/,
+    );
+    fake.stats.mostBinaryParts = 0;
+
+    const ola = device(fake, "ola", "phone");
+    await ola.driver.start();
+    assert.equal(fake.stats.publishes, 3, "20 packages and a last-resort one, nine at a time");
+    assert.equal(fake.keyPackages.length, 21);
+    assert.ok(fake.stats.mostBinaryParts <= 10);
+  });
+
+  it("sends the upload ids with the message, and the keys inside it", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop");
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+
+    const file = new TextEncoder().encode("a small file");
+    const sealed = sealAttachment({ bytes: file, conversationId: dm, name: "notes.txt", mime: "text/plain" });
+    const content = encodeMlsDmContent({ type: "message", id: "m-1", text: "here", attachments: { "upload-1": sealed.meta } });
+    const { seq } = await kari.driver.send(dm, "ola", content, { attachmentIds: ["upload-1"] });
+    await fake.settle();
+
+    assert.deepEqual(fake.attachmentIds.get(seq), ["upload-1"]);
+    const read = decodeMlsDmContent(ola.messages[0].plaintext);
+    assert.ok(read?.type === "message" && read.attachments);
+    const opened = openAttachment({ ciphertext: sealed.ciphertext, conversationId: dm, meta: read.attachments["upload-1"] });
+    assert.deepEqual(opened, file);
+
+    const eleven = Array.from({ length: 11 }, (_, i) => `u${i}`);
+    await assert.rejects(kari.driver.send(dm, "ola", content, { attachmentIds: eleven }), (e: unknown) => e instanceof MlsDriverError && e.code === "too_many_attachments");
+  });
+
+  it("keeps syncing while a server hands Welcomes out a few at a time", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    fake.syncWelcomeLimit = 1;
+    const withKari = fake.dm("kari", "ola");
+    const withMallory = fake.dm("mallory", "ola");
+    const kari = device(fake, "kari", "laptop");
+    const mallory = device(fake, "mallory", "laptop");
+    const ola = device(fake, "ola", "phone");
+    for (const d of [kari, mallory, ola]) await d.driver.start();
+    ola.socket.online = false;
+    await kari.driver.send(withKari, "ola", text("from kari"));
+    await mallory.driver.send(withMallory, "ola", text("from mallory"));
+    assert.equal(fake.welcomes.length, 2);
+
+    ola.socket.online = true;
+    await ola.driver.start();
+    assert.deepEqual(ola.texts().sort(), ["kari: from kari", "mallory: from mallory"]);
+    assert.equal(fake.welcomes.length, 0);
   });
 
   it("says when a device is waiting to be added", async () => {

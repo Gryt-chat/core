@@ -38,7 +38,12 @@ import type {
 /** Five devices per person per server (design, section 1). The server holds the same line. */
 const MLS_MAX_DEVICES_PER_PERSON = 5;
 const COMMIT_ATTEMPTS = 5;
-const LOG_PAGE = 200;
+/** socket.io closes the connection on a packet with more than 10 binary parts (GRYT-1522). */
+const MAX_BINARY_PARTS = 10;
+const LOG_PAGE = MAX_BINARY_PARTS;
+const PUBLISH_BATCH = MAX_BINARY_PARTS - 1;
+/** The server's cap on files in one message. */
+const MAX_ATTACHMENT_IDS = 10;
 const WELCOME_WAIT_MS = 10_000;
 /** The server keeps Welcomes 30 days; a last-resort package is replaced with a week to go. */
 const WELCOME_KEEP_S = 30 * 86_400;
@@ -51,6 +56,7 @@ export type MlsDriverErrorCode =
   | "not_in_group"
   | "unexpected_member"
   | "peer_unverified"
+  | "too_many_attachments"
   | "commit_retries";
 
 export class MlsDriverError extends Error {
@@ -193,13 +199,19 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     // The private halves are stored first, so a Welcome can never name one this device lost.
     await store.putKeyPackages(last ? [...fresh, last] : fresh);
 
-    const r = await transport.publishKeyPackages({
-      deviceId: d.deviceId,
-      keyPackages: fresh.map((k) => k.keyPackage),
-      lastResort: last?.keyPackage,
-    });
-    if (!r.ok) throw refused("Publishing KeyPackages", r);
-    registered = true;
+    // Nine at a time, and the last-resort one rides with the last batch.
+    const all = fresh.map((k) => k.keyPackage);
+    for (let i = 0; i === 0 || i < all.length; i += PUBLISH_BATCH) {
+      const keyPackages = all.slice(i, i + PUBLISH_BATCH);
+      const final = i + PUBLISH_BATCH >= all.length;
+      const r = await transport.publishKeyPackages({
+        deviceId: d.deviceId,
+        keyPackages,
+        lastResort: final ? last?.keyPackage : undefined,
+      });
+      if (!r.ok) throw refused("Publishing KeyPackages", r);
+      registered = true;
+    }
   }
 
   async function syncAndTopUp(forceLastResort = false): Promise<MlsWelcomeDelivery[]> {
@@ -454,7 +466,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
 
   async function ensureOpen(conversationId: string): Promise<void> {
     if ((await run(conversationId, () => openGroup(conversationId))) === "open") return;
-    for (const w of await syncAndTopUp()) await handleWelcome(w);
+    await takeWaitingWelcomes();
     if (!(await store.loadGroup(conversationId))) await waitForWelcome(conversationId);
   }
 
@@ -495,25 +507,57 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     return { result: "joined", usedLastResort: kp.lastResort };
   }
 
-  async function handleWelcome(w: MlsWelcomeDelivery): Promise<void> {
+  /** "retry" when it's kept for later, else whether it used a last-resort package. */
+  async function takeWelcome(w: MlsWelcomeDelivery): Promise<"retry" | "done" | "used_last_resort"> {
     const d = await ownDevice();
-    if (w.deviceId !== d.deviceId || !w.conversationId) return;
+    if (w.deviceId !== d.deviceId || !w.conversationId) return "retry";
     const conversationId = w.conversationId;
     const { result, usedLastResort } = await run(conversationId, () => joinFrom(w));
-    if (result === "retry") return;
+    if (result === "retry") return "retry";
     await transport.ackWelcomes({ deviceId: d.deviceId, welcomeIds: [w.welcomeId] });
-    if (result !== "joined") return;
+    if (result !== "joined") return "done";
     reconciled.delete(conversationId);
     events.onJoined?.({ conversationId, groupId: w.groupId });
     for (const done of welcomeWaiters.get(conversationId) ?? []) done();
     welcomeWaiters.delete(conversationId);
+    return usedLastResort ? "used_last_resort" : "done";
+  }
+
+  async function handleWelcome(w: MlsWelcomeDelivery): Promise<void> {
     // One package was used up, and a used last-resort one gets replaced.
-    await syncAndTopUp(usedLastResort);
+    const outcome = await takeWelcome(w);
+    if (outcome !== "retry") await syncAndTopUp(outcome === "used_last_resort");
+  }
+
+  /* Sync until nothing waiting can be acted on: a server may hand out ten Welcomes a time,
+     and each one taken is acked, so the next sync brings the rest (GRYT-1528). */
+  async function takeWaitingWelcomes(): Promise<void> {
+    let lastResortUsed = false;
+    for (let round = 0; round < 20; round++) {
+      const welcomes = await syncAndTopUp(lastResortUsed);
+      lastResortUsed = false;
+      let taken = 0;
+      for (const w of welcomes) {
+        const outcome = await takeWelcome(w);
+        if (outcome !== "retry") taken += 1;
+        if (outcome === "used_last_resort") lastResortUsed = true;
+      }
+      if (taken === 0) return;
+    }
   }
 
   // ── What the app calls ──────────────────────────────────────────────
 
-  async function send(conversationId: string, peer: string, plaintext: Uint8Array): Promise<{ seq: number }> {
+  async function send(
+    conversationId: string,
+    peer: string,
+    plaintext: Uint8Array,
+    options: { attachmentIds?: readonly string[] } = {},
+  ): Promise<{ seq: number }> {
+    const attachmentIds = options.attachmentIds?.length ? [...options.attachmentIds] : undefined;
+    if (attachmentIds && attachmentIds.length > MAX_ATTACHMENT_IDS) {
+      throw new MlsDriverError("too_many_attachments", `At most ${MAX_ATTACHMENT_IDS} files go with one message.`);
+    }
     if (!registered) throw new MlsDriverError("no_device", "This device isn't registered for MLS here. Call start() first.");
     await ensureOpen(conversationId);
     return run(conversationId, async () => {
@@ -534,7 +578,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       open.state = out.state;
       // The generation is used up whether or not the send arrives, so the state is saved first.
       await save(open);
-      const r = await transport.send({ conversationId, deviceId: d.deviceId, message: out.message });
+      const r = await transport.send({ conversationId, deviceId: d.deviceId, message: out.message, attachmentIds });
       if (!r.ok) throw refused("Sending", r);
       return { seq: r.seq };
     });
@@ -587,7 +631,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     async start() {
       await ownDevice();
       if (!capability) return;
-      for (const w of await syncAndTopUp()) await handleWelcome(w);
+      await takeWaitingWelcomes();
       reconciled.clear();
       for (const rec of await store.listGroups()) {
         await run(rec.conversationId, async () => {

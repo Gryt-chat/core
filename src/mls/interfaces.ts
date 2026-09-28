@@ -89,7 +89,13 @@ export interface MlsTransport {
     welcome?: Uint8Array;
   }): Promise<MlsReply<{ seq: number; epoch: number }>>;
 
-  send(req: { conversationId: string; deviceId: string; message: Uint8Array }): Promise<MlsReply<{ seq: number }>>;
+  /** `attachmentIds` are the uploads the message carries, so the server can tie them to it. */
+  send(req: {
+    conversationId: string;
+    deviceId: string;
+    message: Uint8Array;
+    attachmentIds?: string[];
+  }): Promise<MlsReply<{ seq: number }>>;
 
   fetchLog(req: { conversationId: string; after: number; limit?: number }): Promise<
     MlsReply<{
@@ -243,7 +249,12 @@ export interface MlsDmDriver {
   start(): Promise<void>;
   modeFor(conversationId: string, peerServerUserId: string): Promise<DmSealingMode>;
   /** Opens the group if need be, adds or removes devices that changed, then sends. */
-  send(conversationId: string, peerServerUserId: string, plaintext: Uint8Array): Promise<{ seq: number }>;
+  send(
+    conversationId: string,
+    peerServerUserId: string,
+    plaintext: Uint8Array,
+    options?: { attachmentIds?: readonly string[] },
+  ): Promise<{ seq: number }>;
   handleMessage(entry: MlsLogEntry): Promise<void>;
   handleWelcome(welcome: MlsWelcomeDelivery): Promise<void>;
   handleDevicesChanged(push: { serverUserId: string }): Promise<void>;

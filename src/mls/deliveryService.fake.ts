@@ -61,7 +61,11 @@ export class FakeDeliveryService {
   groups = new Map<string, GroupRow>();
   welcomes: (MlsWelcomeDelivery & { serverUserId: string })[] = [];
   sockets: Socket[] = [];
-  stats = { commits: 0, staleEpoch: 0, groupExists: 0, claims: 0 };
+  stats = { commits: 0, staleEpoch: 0, groupExists: 0, claims: 0, publishes: 0, mostBinaryParts: 0 };
+  /** A cap on Welcomes per sync, for a server that pages them (GRYT-1528). server#241 has none. */
+  syncWelcomeLimit = Infinity;
+  /** What each `mls:send` said it carried, by seq. */
+  attachmentIds = new Map<number, string[] | undefined>();
   private inFlight = new Set<Promise<unknown>>();
   private held: { count: number; waiting: (() => void)[] } | null = null;
   private nextWelcome = 1;
@@ -130,9 +134,10 @@ export class FakeDeliveryService {
     const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
     const member = (conversationId: string) => this.conversations.get(conversationId)?.includes(me) ?? false;
 
-    return {
+    const methods: MlsTransport = {
       publishKeyPackages: async ({ deviceId, keyPackages, lastResort }) => {
         await tick();
+        this.stats.publishes += 1;
         const isNew = !this.isDevice(me, deviceId);
         if (isNew && (this.devices.get(me) ?? []).length >= MAX_DEVICES) {
           return fail("too_many_devices", "You have five devices using encrypted messages here.");
@@ -228,7 +233,7 @@ export class FakeDeliveryService {
         return this.commit(me, conversationId, deviceId, commit, welcome);
       },
 
-      send: async ({ conversationId, deviceId, message }) => {
+      send: async ({ conversationId, deviceId, message, attachmentIds }) => {
         await tick();
         if (!member(conversationId)) return fail("not_found", "No such conversation.");
         const g = this.groups.get(conversationId);
@@ -242,6 +247,7 @@ export class FakeDeliveryService {
         if (dup) return { ok: true, seq: dup.seq };
         const kind = info.contentType === "application" ? "application" : "proposal";
         const entry = this.append(g, kind, epoch, me, deviceId, message);
+        this.attachmentIds.set(entry.seq, attachmentIds);
         this.push(this.conversations.get(conversationId)!, (d) => d.handleMessage(entry));
         return { ok: true, seq: entry.seq };
       },
@@ -272,7 +278,9 @@ export class FakeDeliveryService {
         const groups = [...this.groups.values()]
           .filter((g) => member(g.conversationId))
           .map((g) => ({ ...this.groupView(g), oldestSeq: g.log.length ? g.log[0].seq : null }));
-        const welcomes = registered ? this.welcomes.filter((w) => w.serverUserId === me && w.deviceId === deviceId) : [];
+        const welcomes = registered
+          ? this.welcomes.filter((w) => w.serverUserId === me && w.deviceId === deviceId).slice(0, this.syncWelcomeLimit)
+          : [];
         return { ok: true, registered, groups, welcomes, keyPackages: { ...this.counts(me, deviceId), target: MAX_KEY_PACKAGES } };
       },
 
@@ -283,6 +291,30 @@ export class FakeDeliveryService {
         return { ok: true, deleted: before - this.welcomes.length };
       },
     };
+
+    // socket.io-parser closes the connection on a packet with more than ten binary parts.
+    const guarded = {} as Record<string, (req: unknown) => Promise<unknown>>;
+    for (const [name, method] of Object.entries(methods) as [string, (req: unknown) => Promise<unknown>][]) {
+      guarded[name] = async (req) => {
+        this.checkParts(socket, name, req);
+        const reply = await method(req);
+        this.checkParts(socket, name, reply);
+        return reply;
+      };
+    }
+    return guarded as unknown as MlsTransport;
+  }
+
+  private checkParts(socket: Socket, event: string, value: unknown): void {
+    const count = (v: unknown): number =>
+      v instanceof Uint8Array ? 1 : Array.isArray(v) ? v.reduce((n: number, x) => n + count(x), 0)
+        : v && typeof v === "object" ? Object.values(v).reduce((n: number, x) => n + count(x), 0) : 0;
+    const parts = count(value);
+    this.stats.mostBinaryParts = Math.max(this.stats.mostBinaryParts, parts);
+    if (parts > 10) {
+      socket.online = false;
+      throw new Error(`${event}: ${parts} binary parts, so the socket was closed ("too many attachments").`);
+    }
   }
 
   private counts(serverUserId: string, deviceId: string) {

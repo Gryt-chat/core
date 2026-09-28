@@ -96,6 +96,12 @@ export {
 
 export { createMlsDmDriver, MlsDriverError, type MlsDriverErrorCode } from "./mls/dmDriver.js";
 export { mlsPinsFromPeerPins } from "./mls/pins.js";
+export {
+  decodeMlsDmContent,
+  encodeMlsDmContent,
+  MLS_DM_CONTENT_VERSION,
+  type MlsDmContent,
+} from "./mls/content.js";
 export type {
   DmSealingMode,
   MlsClaimedKeyPackage,
