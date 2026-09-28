@@ -258,6 +258,52 @@ describe("MLS DM driver", () => {
     assert.deepEqual(laptop.texts(), ["ola: two left"]);
   });
 
+  it("has your other device take a removed one out, with the peer offline", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const laptop = device(fake, "kari", "laptop");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    for (const d of [laptop, phone, ola]) await d.driver.start();
+    await laptop.driver.send(dm, "ola", text("all three"));
+    await fake.settle();
+
+    // A new desktop holds no group, so only the laptop can commit the Remove.
+    const desk = device(fake, "kari", "desk");
+    await desk.driver.start();
+    ola.socket.online = false;
+    await desk.driver.removeOwnDevice(phone.store.device!.deviceId);
+    await fake.settle();
+
+    assert.deepEqual(phone.lost, [{ conversationId: dm, reason: "removed" }]);
+    assert.equal(fake.groups.get(dm)!.log.at(-1)!.senderDeviceId, laptop.store.device!.deviceId);
+  });
+
+  it("lists your own devices with the names their certificates carry", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const laptop = device(fake, "kari", "laptop");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    for (const d of [laptop, phone, ola]) await d.driver.start();
+    await laptop.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+    const tablet = device(fake, "kari", "tablet");
+    await tablet.driver.start();
+
+    const fromLaptop = await laptop.driver.ownDevices();
+    assert.deepEqual(
+      fromLaptop.map((d) => [d.name, d.thisDevice]),
+      [["laptop", true], ["phone", false], [null, false]],
+      "the tablet is in no group yet, so nothing here shows its name",
+    );
+    assert.ok(fromLaptop.every((d) => d.serverUserId === "kari" && typeof d.addedAt === "string"));
+    assert.deepEqual(
+      (await tablet.driver.ownDevices()).map((d) => [d.name, d.thisDevice]),
+      [[null, false], [null, false], ["tablet", true]],
+    );
+  });
+
   it("never drops back to version 1 once the peer was seen on MLS", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "ola");

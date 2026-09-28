@@ -57,6 +57,8 @@ export class FakeDeliveryService {
   scope: IdentityScope;
   conversations = new Map<string, string[]>();
   devices = new Map<string, string[]>();
+  /** When each device id first published, as `mls:devices` reports it. */
+  deviceAddedAt = new Map<string, string>();
   keyPackages: KeyPackageRow[] = [];
   groups = new Map<string, GroupRow>();
   welcomes: (MlsWelcomeDelivery & { serverUserId: string })[] = [];
@@ -149,7 +151,10 @@ export class FakeDeliveryService {
           const { ref } = await readMlsKeyPackage(b, this.scope);
           rows.push({ ref, serverUserId: me, deviceId, data: b.slice(), lastResort: lr, claimed: false });
         }
-        if (isNew) this.devices.set(me, [...(this.devices.get(me) ?? []), deviceId]);
+        if (isNew) {
+          this.devices.set(me, [...(this.devices.get(me) ?? []), deviceId]);
+          this.deviceAddedAt.set(deviceId, new Date().toISOString());
+        }
         let stored = 0;
         for (const row of rows) {
           const unclaimed = this.keyPackages.filter((k) => k.deviceId === deviceId && !k.lastResort && !k.claimed).length;
@@ -190,7 +195,13 @@ export class FakeDeliveryService {
 
       listDevices: async ({ conversationId }) => {
         await tick();
-        if (conversationId === undefined) return { ok: true, devices: this.devicesOf([me]) };
+        if (conversationId === undefined) {
+          const devices = this.devicesOf([me]).map((d) => {
+            const at = this.deviceAddedAt.get(d.deviceId);
+            return at ? { ...d, createdAt: at, lastSeenAt: at } : d;
+          });
+          return { ok: true, devices };
+        }
         if (!member(conversationId)) return fail("not_found", "No such conversation.");
         return { ok: true, devices: this.devicesOf(this.conversations.get(conversationId)!) };
       },
