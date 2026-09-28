@@ -72,6 +72,18 @@ export interface ApproverPairing {
 
 const NOT_LISTED_RETRIES = 5;
 
+/** auth#46's codes that get a named reason. Anything else it can answer still falls
+    through to the generic `approve:<code>`. */
+const APPROVE_ERROR_REASONS: Record<string, PairingEndReason> = {
+  code_used: "code_used",
+  unknown_code: "code_expired",
+  expired_code: "code_expired",
+  code_not_pending: "code_expired",
+  required_actions: "required_actions",
+  stale_token: "stale_token",
+  rate_limited: "rate_limited",
+};
+
 /** A: claims the session, shows N and the emoji, and on Approve seals the envelope, signs N in and adds it. */
 export function createApproverPairing(options: ApproverOptions): ApproverPairing {
   const { relay, fetch, devices } = options;
@@ -169,7 +181,8 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     if (res.status === 204) return true;
     if (res.status === 404) return false;
     const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    throw new PairingEnded(`approve:${typeof body?.error === "string" ? body.error : res.status}`);
+    const code = typeof body?.error === "string" ? body.error : String(res.status);
+    throw new PairingEnded(APPROVE_ERROR_REASONS[code] ?? `approve:${code}`);
   }
 
   async function addEverywhere(ready: PairedServerDevice[]) {

@@ -72,7 +72,8 @@ export type OwnDeviceAdder = (host: string) =>
   | { addOwnDevice(deviceId: string, options?: MlsAddOwnDeviceOptions): Promise<MlsOwnDeviceAdd[]> }
   | undefined;
 
-/** Why a pairing stopped. `approve:<error>` carries the extension's own error code. */
+/** Why a pairing stopped. `approve:<error>` carries the extension's own error code for anything
+    below that isn't broken out on its own (GRYT-1578; auth#46 has the full list). */
 export type PairingEndReason =
   | "cancelled"
   | "cancelled_by_other"
@@ -89,4 +90,16 @@ export type PairingEndReason =
   | "wrong_account"
   | "sign_in_failed"
   | "relay_error"
+  /** The approve endpoint says this user_code already got its one answer. */
+  | "code_used"
+  /** The approve endpoint says the user_code isn't valid any more: unknown, expired, or not pending. */
+  | "code_expired"
+  /** The approve endpoint refuses because the account has something pending, like verifying an email. */
+  | "required_actions"
+  /** The approve endpoint refuses A's access token as too old; refresh it and try again. */
+  | "stale_token"
+  /** The device grant itself said no: A denied it, or the approve endpoint's refusal denied the code. */
+  | "access_denied"
+  /** The device grant's user_code ran out before anyone answered it. */
+  | "expired_token"
   | `approve:${string}`;
