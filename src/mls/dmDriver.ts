@@ -34,6 +34,8 @@ import type {
   MlsLogEntry,
   MlsOwnDevice,
   MlsRefusal,
+  MlsReply,
+  MlsTransport,
   MlsWelcomeDelivery,
 } from "./interfaces.js";
 
@@ -59,7 +61,8 @@ export type MlsDriverErrorCode =
   | "unexpected_member"
   | "peer_unverified"
   | "too_many_attachments"
-  | "commit_retries";
+  | "commit_retries"
+  | "device_removed";
 
 export class MlsDriverError extends Error {
   code: MlsDriverErrorCode;
@@ -116,7 +119,40 @@ interface Open {
 }
 
 export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
-  const { transport, store, pins, events, serverUserId: self, capability } = options;
+  const { store, pins, events, serverUserId: self, capability } = options;
+
+  /* Once the server says `device_removed`, nothing goes to it again from this driver:
+     no sync, and above all no publish that could register this device back. */
+  let removed = false;
+  const removedError = (r?: MlsRefusal) =>
+    new MlsDriverError("device_removed", "This device was removed from encrypted messages on this server.", r);
+  function stopOnRemoval<Req, Res extends object>(call: (req: Req) => Promise<MlsReply<Res>>) {
+    return async (req: Req): Promise<MlsReply<Res>> => {
+      if (removed) throw removedError();
+      const r = await call(req);
+      if (!r.ok && r.error === "device_removed") {
+        if (!removed) {
+          removed = true;
+          events.onDeviceRemoved?.();
+        }
+        throw removedError(r);
+      }
+      return r;
+    };
+  }
+  const raw = options.transport;
+  const transport: MlsTransport = {
+    publishKeyPackages: stopOnRemoval((req) => raw.publishKeyPackages(req)),
+    claimKeyPackages: stopOnRemoval((req) => raw.claimKeyPackages(req)),
+    listDevices: stopOnRemoval((req) => raw.listDevices(req)),
+    removeDevice: stopOnRemoval((req) => raw.removeDevice(req)),
+    createGroup: stopOnRemoval((req) => raw.createGroup(req)),
+    commit: stopOnRemoval((req) => raw.commit(req)),
+    send: stopOnRemoval((req) => raw.send(req)),
+    fetchLog: stopOnRemoval((req) => raw.fetchLog(req)),
+    sync: stopOnRemoval((req) => raw.sync(req)),
+    ackWelcomes: stopOnRemoval((req) => raw.ackWelcomes(req)),
+  };
   const scope = asIdentityScope(options.scope);
   const trusts = new Map<string, MlsTrust>();
   /** What the engine asks about every leaf: is it somebody in this conversation, by pin. */
@@ -617,6 +653,8 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   /** Adds wait for the next send; a device that's gone is removed straight away. */
   async function handleDevicesChanged(push: { serverUserId: string }): Promise<void> {
     reconciled.clear();
+    // One of yours changed, and it may be this one: a sync is how the server says so.
+    if (push.serverUserId === self && registered) await transport.sync({ deviceId: (await ownDevice()).deviceId });
     for (const rec of await store.listGroups()) {
       await run(rec.conversationId, async () => {
         const open = await load(rec.conversationId);
