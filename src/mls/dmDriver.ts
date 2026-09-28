@@ -50,6 +50,10 @@ const PUBLISH_BATCH = MAX_BINARY_PARTS - 1;
 /** The server's cap on files in one message. */
 const MAX_ATTACHMENT_IDS = 10;
 const WELCOME_WAIT_MS = 10_000;
+/** The same cap as a message that isn't MLS: after this a send fails and the text goes back. */
+const SEND_GIVE_UP_MS = 5 * 60_000;
+/** A send with no answer goes again after this, or sooner if the connection comes back. */
+const RESEND_AFTER_MS = 2_000;
 /** The server keeps Welcomes 30 days; a last-resort package is replaced with a week to go. */
 const WELCOME_KEEP_S = 30 * 86_400;
 const RENEW_BEFORE_S = 7 * 86_400;
@@ -64,7 +68,9 @@ export type MlsDriverErrorCode =
   | "peer_unverified"
   | "too_many_attachments"
   | "commit_retries"
-  | "device_removed";
+  | "device_removed"
+  | "offline"
+  | "stopped";
 
 export class MlsDriverError extends Error {
   code: MlsDriverErrorCode;
@@ -81,6 +87,12 @@ export class MlsDriverError extends Error {
 
 function refused(what: string, r: MlsRefusal): MlsDriverError {
   return new MlsDriverError("refused", `${what}: ${r.error} (${r.message})`, r);
+}
+
+/** A refusal that says nothing about the request, only that the server couldn't be reached. */
+function unreachable(r: MlsRefusal | unknown): "offline" | "timeout" | null {
+  const error = r instanceof MlsDriverError ? r.refusal?.error : (r as MlsRefusal | undefined)?.error;
+  return error === "offline" || error === "timeout" ? error : null;
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -175,6 +187,42 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   const reconciled = new Set<string>();
   const seen = new Set<string>();
   const welcomeWaiters = new Map<string, (() => void)[]>();
+
+  /** A send's ciphertext once it has been on the wire, and its seq once the log shows it. */
+  interface Flight {
+    conversationId: string;
+    message: Uint8Array | null;
+    seq: number | null;
+  }
+  const flights = new Set<Flight>();
+  let waitingForServer = false;
+  let stopped = false;
+  const paused = new Set<{ resume(): void; fail(e: Error): void }>();
+  const giveUpMs = options.sendGiveUpMs ?? SEND_GIVE_UP_MS;
+
+  function setWaiting(next: boolean): void {
+    if (waitingForServer === next) return;
+    waitingForServer = next;
+    events.onWaiting?.(next);
+  }
+
+  /** Until `start()` has caught up again, or `ms`. Fails at the deadline or on `stop()`. */
+  function pause(deadline: number, ms: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const left = deadline - Date.now();
+      if (stopped || left <= 0) return reject(stopped ? stoppedError() : gaveUpError());
+      const done = (then: () => void) => {
+        clearTimeout(timer);
+        paused.delete(entry);
+        then();
+      };
+      const entry = { resume: () => done(resolve), fail: (e: Error) => done(() => reject(e)) };
+      const timer = setTimeout(() => (Date.now() >= deadline ? entry.fail(gaveUpError()) : entry.resume()), Math.min(left, ms));
+      paused.add(entry);
+    });
+  }
+  const gaveUpError = () => new MlsDriverError("offline", "The server didn't answer in time, so the message wasn't sent.");
+  const stoppedError = () => new MlsDriverError("stopped", "This connection has closed.");
 
   async function ownDevice(): Promise<MlsDeviceRecord> {
     if (device) return device;
@@ -319,7 +367,12 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
           events.onUndecryptable?.({ conversationId: open.rec.conversationId, seq: e.seq, reason: "bad_proposal" });
         }
       }
-    } else if (!(e.senderServerUserId === self && e.senderDeviceId === d.deviceId) && e.epoch >= open.rec.joinedEpoch) {
+    } else if (e.senderServerUserId === self && e.senderDeviceId === d.deviceId) {
+      // A send whose answer never came: the log says it landed, so it isn't sent again.
+      for (const f of flights) {
+        if (f.conversationId === open.rec.conversationId && f.seq === null && f.message && sameBytes(f.message, e.data)) f.seq = e.seq;
+      }
+    } else if (e.epoch >= open.rec.joinedEpoch) {
       let plaintext: Uint8Array | null = null;
       try {
         const r = await processMlsMessage(open.state, e.data);
@@ -611,16 +664,47 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     plaintext: Uint8Array,
     options: { attachmentIds?: readonly string[] } = {},
   ): Promise<{ seq: number }> {
-    const attachmentIds = options.attachmentIds?.length ? [...options.attachmentIds] : undefined;
+    const attachmentIds: string[] | undefined = options.attachmentIds?.length ? [...options.attachmentIds] : undefined;
     if (attachmentIds && attachmentIds.length > MAX_ATTACHMENT_IDS) {
       throw new MlsDriverError("too_many_attachments", `At most ${MAX_ATTACHMENT_IDS} files go with one message.`);
     }
     if (!registered) throw new MlsDriverError("no_device", "This device isn't registered for MLS here. Call start() first.");
-    await ensureOpen(conversationId);
+    if (stopped) throw stoppedError();
+    const deadline = Date.now() + giveUpMs;
+    const flight: Flight = { conversationId, message: null, seq: null };
+    flights.add(flight);
+    try {
+      for (;;) {
+        try {
+          return await sendOnce(flight, peer, plaintext, attachmentIds);
+        } catch (e) {
+          const why = unreachable(e);
+          if (!why || stopped) throw e;
+          // Offline waits for the next start(). A timeout goes again soon, as the same bytes.
+          if (why === "offline") setWaiting(true);
+          await pause(deadline, why === "offline" ? Infinity : RESEND_AFTER_MS);
+        }
+      }
+    } finally {
+      flights.delete(flight);
+    }
+  }
+
+  /* Encrypted at most once, and only once the group is caught up. Every later attempt sends
+     the same bytes, which the server takes as a repeat rather than a second message. */
+  async function sendOnce(flight: Flight, peer: string, plaintext: Uint8Array, attachmentIds?: string[]): Promise<{ seq: number }> {
+    const { conversationId } = flight;
+    if (!flight.message) await ensureOpen(conversationId);
     return run(conversationId, async () => {
       const d = await ownDevice();
       const open = await load(conversationId);
       if (!open || !(await catchUp(open))) throw new MlsDriverError("not_in_group", "This device isn't in that group.");
+      if (flight.seq !== null) return { seq: flight.seq };
+      if (flight.message) {
+        const r = await transport.send({ conversationId, deviceId: d.deviceId, message: flight.message, attachmentIds });
+        if (!r.ok) throw refused("Sending", r);
+        return { seq: r.seq };
+      }
       if (!reconciled.has(conversationId)) await reconcile(open, peer, true);
       const people = await peopleIn(conversationId, open.state);
       if (people.some((p) => p !== self && p !== peer)) {
@@ -635,6 +719,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       open.state = out.state;
       // The generation is used up whether or not the send arrives, so the state is saved first.
       await save(open);
+      flight.message = out.message;
       const r = await transport.send({ conversationId, deviceId: d.deviceId, message: out.message, attachmentIds });
       if (!r.ok) throw refused("Sending", r);
       return { seq: r.seq };
@@ -835,6 +920,13 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
           if (open) await catchUp(open);
         });
       }
+      // Caught up, so the sends that waited go now, on top of that.
+      setWaiting(false);
+      for (const p of [...paused]) p.resume();
+    },
+    stop() {
+      stopped = true;
+      for (const p of [...paused]) p.fail(stoppedError());
     },
     modeFor,
     send,
