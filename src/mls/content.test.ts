@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { sealAttachment } from "@gryt/crypto";
 
-import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent } from "./content.ts";
+import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent, readMlsDmContent } from "./content.ts";
 
 const raw = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 const meta = () => sealAttachment({ bytes: new Uint8Array([1, 2, 3]), conversationId: "dm:a:b", name: "a.png", mime: "image/png", width: 2, height: 1 }).meta;
@@ -65,6 +65,115 @@ describe("MLS DM content", () => {
     for (const v of bad) assert.equal(decodeMlsDmContent(raw(v)), null, JSON.stringify(v)?.slice(0, 80));
     assert.equal(decodeMlsDmContent(new TextEncoder().encode('{"v":1,"type":"message","id":"a","text":"x","attachments":{"__proto__":{}}}')), null);
     assert.equal(decodeMlsDmContent(new Uint8Array([0xff, 0xfe])), null);
+  });
+
+  it("carries a reaction as an explicit add or remove on a message id", () => {
+    const reactions: MlsDmContent[] = [
+      { type: "reaction", id: "8d0e1c1e-1111-4a4a-9b9b-222233334444", emoji: "👍", action: "add" },
+      { type: "reaction", id: "a", emoji: "❤️", action: "remove" },
+      { type: "reaction", id: "a", emoji: ":party_owl:", action: "add" },
+      { type: "reaction", id: "a", emoji: "👍🏽", action: "add" },
+      { type: "reaction", id: "a", emoji: "🇳🇴", action: "add" },
+      { type: "reaction", id: "a", emoji: "1️⃣", action: "add" },
+      { type: "reaction", id: "a", emoji: "👩🏻‍❤️‍💋‍👨🏼", action: "add" },
+      { type: "reaction", id: "a", emoji: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", action: "add" },
+      { type: "reaction", id: "a", emoji: "©️", action: "add" },
+    ];
+    for (const c of reactions) {
+      const bytes = encodeMlsDmContent(c);
+      assert.deepEqual(bytes, raw({ v: 1, ...c }));
+      assert.deepEqual(decodeMlsDmContent(bytes), c);
+    }
+  });
+
+  it("reads every emoji the pickers offer as a reaction", () => {
+    // Node's RGI_Emoji set is the list both pickers draw from, give or take a Unicode version.
+    const rgi = /^\p{RGI_Emoji}$/v;
+    const samples = ["😀", "🫠", "🧑‍🧑‍🧒‍🧒", "🏳️‍🌈", "🏳️‍⚧️", "#️⃣", "*️⃣", "👁️‍🗨️", "🧔🏿‍♂️", "🐦‍🔥", "™️", "〰️", "🅰️"];
+    for (const emoji of samples) {
+      assert.ok(rgi.test(emoji), emoji);
+      assert.ok(decodeMlsDmContent(raw({ v: 1, type: "reaction", id: "a", emoji, action: "add" })), emoji);
+    }
+  });
+
+  it("refuses a reaction that isn't one emoji", () => {
+    const bad = [
+      "",
+      "lol",
+      "1",
+      "#",
+      "👍 ",
+      " 👍",
+      "👍\n",
+      "‍",
+      "️",
+      "🏻",
+      "👍".repeat(13),
+      ":a:",
+      ":x" + "x".repeat(32) + ":",
+      ":party owl:",
+      ":<img>:",
+      "<img src=x onerror=alert(1)>",
+      "é",
+      "中",
+      "\u202e👍",
+    ];
+    for (const emoji of bad) {
+      assert.equal(decodeMlsDmContent(raw({ v: 1, type: "reaction", id: "a", emoji, action: "add" })), null, JSON.stringify(emoji));
+    }
+    for (const v of [
+      { v: 1, type: "reaction", id: "a", emoji: "👍" },
+      { v: 1, type: "reaction", id: "a", emoji: "👍", action: "toggle" },
+      { v: 1, type: "reaction", id: "a", emoji: 1, action: "add" },
+      { v: 1, type: "reaction", emoji: "👍", action: "add" },
+      { v: 1, type: "reaction", id: "x".repeat(65), emoji: "👍", action: "add" },
+    ]) {
+      assert.equal(decodeMlsDmContent(raw(v)), null, JSON.stringify(v));
+    }
+    assert.throws(() => encodeMlsDmContent({ type: "reaction", id: "a", emoji: "hei", action: "add" }));
+  });
+
+  it("drops fields it doesn't know on a reaction", () => {
+    assert.deepEqual(decodeMlsDmContent(raw({ v: 1, type: "reaction", id: "a", emoji: "👍", action: "add", text: "x", users: ["b"] })), {
+      type: "reaction",
+      id: "a",
+      emoji: "👍",
+      action: "add",
+    });
+  });
+
+  it("tells content from a newer app apart from junk", () => {
+    const newer: unknown[] = [
+      { v: 1, type: "poll", id: "a", question: "?" },
+      { v: 1, type: "read_receipt", id: "a" },
+      { v: 2, type: "message", id: "a", text: "x" },
+      { v: 2, type: "something_else" },
+    ];
+    for (const v of newer) {
+      assert.equal(readMlsDmContent(raw(v)), "newer", JSON.stringify(v));
+      assert.equal(decodeMlsDmContent(raw(v)), null, JSON.stringify(v));
+    }
+    const junk: unknown[] = [
+      { v: 1, type: "message", id: "a" },
+      { v: 1, type: "reaction", id: "a", emoji: "lol", action: "add" },
+      { v: 1, type: "edit", id: "a", text: 5 },
+      { v: 1, type: "poll" },
+      { v: 1, type: "poll", id: "" },
+      { v: 1, type: "Poll", id: "a" },
+      { v: 1, type: "<script>", id: "a" },
+      { v: 1, type: 7, id: "a" },
+      { v: 1, id: "a" },
+      { v: 2 },
+      { v: 1.5, type: "poll", id: "a" },
+      { v: 0, type: "poll", id: "a" },
+      { v: "2", type: "poll", id: "a" },
+      [1, 2],
+      null,
+    ];
+    for (const v of junk) assert.equal(readMlsDmContent(raw(v)), null, JSON.stringify(v));
+    assert.equal(readMlsDmContent(new Uint8Array([0xff, 0xfe])), null);
+    const c: MlsDmContent = { type: "reaction", id: "a", emoji: "👍", action: "add" };
+    assert.deepEqual(readMlsDmContent(encodeMlsDmContent(c)), c);
   });
 
   it("won't write what it wouldn't read", () => {
