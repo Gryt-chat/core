@@ -118,12 +118,37 @@ export function encodeMlsDmContent(content: MlsDmContent): Uint8Array {
 
 /** Null for anything this version can't read: a newer version, a new type, or junk. */
 export function decodeMlsDmContent(bytes: Uint8Array): MlsDmContent | null {
-  let raw: unknown;
+  return fromRaw(parse(bytes));
+}
+
+/**
+ * Like `decodeMlsDmContent`, but tells content from a newer app ("newer", skip it quietly)
+ * apart from junk (null, which is worth counting). A known type with a bad field is junk.
+ */
+export function readMlsDmContent(bytes: Uint8Array): MlsDmContent | "newer" | null {
+  const raw = parse(bytes);
+  return fromRaw(raw) ?? (isNewer(raw) ? "newer" : null);
+}
+
+const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction"]);
+const TYPE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+
+/** A later version, or a type this one doesn't know that names its message the way ours do. */
+function isNewer(raw: unknown): boolean {
+  if (!isObject(raw) || typeof raw.type !== "string" || !TYPE_NAME.test(raw.type)) return false;
+  if (raw.v === MLS_DM_CONTENT_VERSION) return !KNOWN_TYPES.has(raw.type) && isId(raw.id);
+  return typeof raw.v === "number" && Number.isSafeInteger(raw.v) && raw.v > MLS_DM_CONTENT_VERSION;
+}
+
+function parse(bytes: Uint8Array): unknown {
   try {
-    raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     return null;
   }
+}
+
+function fromRaw(raw: unknown): MlsDmContent | null {
   if (!isObject(raw) || raw.v !== MLS_DM_CONTENT_VERSION || !isId(raw.id)) return null;
   const { type, id, text } = raw;
 

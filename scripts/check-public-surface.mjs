@@ -69,6 +69,7 @@ const REQUIRED = [
   "decodeMlsDmContent",
   "encodeMlsDmContent",
   "MLS_DM_CONTENT_VERSION",
+  "readMlsDmContent",
   "applyMlsReaction",
   "mlsReactionAction",
 ];

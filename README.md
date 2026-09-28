@@ -54,7 +54,8 @@ goes missing **and** when one appears that nobody listed.
   pins from the peer pins `@gryt/crypto` already keeps.
   `encodeMlsDmContent` and `decodeMlsDmContent` write and read what goes inside
   each message, so both apps use the same JSON: a message, an edit, a delete or
-  a reaction. `applyMlsReaction` puts a reaction on a message in the archive,
+  a reaction. `readMlsDmContent` also says when something came from a newer app,
+  so it can be skipped quietly rather than counted as broken. `applyMlsReaction` puts a reaction on a message in the archive,
   since the server never sees one. It's the one module with a
   dependency, `@gryt/crypto`, pinned exactly the way the apps pin it.
 

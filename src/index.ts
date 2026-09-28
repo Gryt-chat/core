@@ -101,6 +101,7 @@ export {
   encodeMlsDmContent,
   MLS_DM_CONTENT_VERSION,
   type MlsDmContent,
+  readMlsDmContent,
 } from "./mls/content.js";
 export { applyMlsReaction, mlsReactionAction, type MlsReaction } from "./mls/reactions.js";
 export type {

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import { sealAttachment } from "@gryt/crypto";
 
-import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent } from "./content.ts";
+import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent, readMlsDmContent } from "./content.ts";
 
 const raw = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 const meta = () => sealAttachment({ bytes: new Uint8Array([1, 2, 3]), conversationId: "dm:a:b", name: "a.png", mime: "image/png", width: 2, height: 1 }).meta;
@@ -140,6 +140,40 @@ describe("MLS DM content", () => {
       emoji: "👍",
       action: "add",
     });
+  });
+
+  it("tells content from a newer app apart from junk", () => {
+    const newer: unknown[] = [
+      { v: 1, type: "poll", id: "a", question: "?" },
+      { v: 1, type: "read_receipt", id: "a" },
+      { v: 2, type: "message", id: "a", text: "x" },
+      { v: 2, type: "something_else" },
+    ];
+    for (const v of newer) {
+      assert.equal(readMlsDmContent(raw(v)), "newer", JSON.stringify(v));
+      assert.equal(decodeMlsDmContent(raw(v)), null, JSON.stringify(v));
+    }
+    const junk: unknown[] = [
+      { v: 1, type: "message", id: "a" },
+      { v: 1, type: "reaction", id: "a", emoji: "lol", action: "add" },
+      { v: 1, type: "edit", id: "a", text: 5 },
+      { v: 1, type: "poll" },
+      { v: 1, type: "poll", id: "" },
+      { v: 1, type: "Poll", id: "a" },
+      { v: 1, type: "<script>", id: "a" },
+      { v: 1, type: 7, id: "a" },
+      { v: 1, id: "a" },
+      { v: 2 },
+      { v: 1.5, type: "poll", id: "a" },
+      { v: 0, type: "poll", id: "a" },
+      { v: "2", type: "poll", id: "a" },
+      [1, 2],
+      null,
+    ];
+    for (const v of junk) assert.equal(readMlsDmContent(raw(v)), null, JSON.stringify(v));
+    assert.equal(readMlsDmContent(new Uint8Array([0xff, 0xfe])), null);
+    const c: MlsDmContent = { type: "reaction", id: "a", emoji: "👍", action: "add" };
+    assert.deepEqual(readMlsDmContent(encodeMlsDmContent(c)), c);
   });
 
   it("won't write what it wouldn't read", () => {
