@@ -65,6 +65,7 @@ const REQUIRED = [
   // mls
   "createMlsDmDriver",
   "MlsDriverError",
+  "mlsPinsFromPeerPins",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.

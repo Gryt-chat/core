@@ -50,6 +50,7 @@ export type MlsDriverErrorCode =
   | "waiting_for_welcome"
   | "not_in_group"
   | "unexpected_member"
+  | "peer_unverified"
   | "commit_retries";
 
 export class MlsDriverError extends Error {
@@ -114,7 +115,8 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   function trustFor(conversationId: string): MlsTrust {
     let t = trusts.get(conversationId);
     if (!t) {
-      t = { scope, trustPersonKey: async (c) => (await pins.personOf(conversationId, c.personPublicKey)) !== null };
+      const trustPersonKey = pins.trustFor?.(conversationId) ?? (async (c) => (await pins.personOf(conversationId, c.personPublicKey)) !== null);
+      t = { scope, trustPersonKey };
       trusts.set(conversationId, t);
     }
     return t;
@@ -174,15 +176,15 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     // A Welcome can still name a package for as long as the server keeps Welcomes.
     for (const k of held) if (k.expiresAt !== undefined && k.expiresAt < now - WELCOME_KEEP_S) await store.deleteKeyPackage(k.ref);
     const newestLast = held.filter((k) => k.lastResort).sort((a, b) => b.createdAt - a.createdAt)[0];
-    const lastRunningOut = newestLast?.expiresAt !== undefined && newestLast.expiresAt - now < RENEW_BEFORE_S;
+    // One with no expiresAt predates lifetimes, and readers now refuse it.
+    const lastRunningOut = !!newestLast && (newestLast.expiresAt === undefined || newestLast.expiresAt - now < RENEW_BEFORE_S);
 
     const wanted = !registered || counts.unclaimed < counts.target / 2 ? counts.target - counts.unclaimed : 0;
     const needLastResort = !counts.lastResort || forceLastResort || lastRunningOut;
     if (wanted <= 0 && !needLastResort && registered) return;
 
     const make = async (lastResort: boolean): Promise<MlsKeyPackageRecord> => {
-      const kp: { keyPackage: Uint8Array; privatePackage: Uint8Array; ref: string; expiresAt?: number } =
-        await generateMlsKeyPackage(d);
+      const kp = await generateMlsKeyPackage(d);
       return { ...kp, lastResort, createdAt: Date.now() };
     };
     const fresh: MlsKeyPackageRecord[] = [];
@@ -356,34 +358,43 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     const inTree = treeIds(open.state);
     const wanted = listed.filter((x) => !inTree.has(x.deviceId) && x.deviceId !== d.deviceId);
     if (wanted.length === 0) return;
-    const verified: MlsClaimedKeyPackage[] = [];
     let asking: MlsDeviceRef[] = wanted;
-    // A package that won't read, say one past its lifetime, gets one more claim for that device.
+    let addedPeer = false;
+    // A package out of date, by the reader or by addMlsMembers, gets one fresh claim for that device.
     for (let round = 0; round < 2 && asking.length > 0; round++) {
       const claim = await transport.claimKeyPackages({ conversationId, deviceId: d.deviceId, devices: asking });
       if (!claim.ok) throw refused("Claiming KeyPackages", claim);
       asking = [];
+      const verified: MlsClaimedKeyPackage[] = [];
       for (const kp of claim.keyPackages) {
         const verdict = await vouchedFor(conversationId, kp, peer);
         if (verdict === "ok") verified.push(kp);
         else if (verdict === "unreadable") asking.push({ serverUserId: kp.serverUserId, deviceId: kp.deviceId });
       }
-    }
 
-    await commitWithRetry(open, async (s) => {
-      const tree = treeIds(s);
-      const counts = new Map<string, number>();
-      for (const person of await peopleIn(conversationId, s)) if (person) counts.set(person, (counts.get(person) ?? 0) + 1);
-      const add: MlsClaimedKeyPackage[] = [];
-      for (const kp of verified) {
-        const n = counts.get(kp.serverUserId) ?? 0;
-        if (tree.has(kp.deviceId) || n >= MLS_MAX_DEVICES_PER_PERSON) continue;
-        counts.set(kp.serverUserId, n + 1);
-        add.push(kp);
-      }
-      return add.length ? addMlsMembers(s, add.map((k) => k.keyPackage)) : null;
-    });
-    if (verified.some((k) => k.serverUserId === peer)) await markSeen(peer);
+      await commitWithRetry(open, async (s) => {
+        const tree = treeIds(s);
+        const counts = new Map<string, number>();
+        for (const person of await peopleIn(conversationId, s)) if (person) counts.set(person, (counts.get(person) ?? 0) + 1);
+        const add: MlsClaimedKeyPackage[] = [];
+        for (const kp of verified) {
+          const n = counts.get(kp.serverUserId) ?? 0;
+          if (tree.has(kp.deviceId) || n >= MLS_MAX_DEVICES_PER_PERSON) continue;
+          counts.set(kp.serverUserId, n + 1);
+          add.push(kp);
+        }
+        if (add.length === 0) return null;
+        try {
+          const c = await addMlsMembers(s, add.map((k) => k.keyPackage));
+          addedPeer ||= add.some((k) => k.serverUserId === peer);
+          return c;
+        } catch {
+          asking.push(...add.map((k) => ({ serverUserId: k.serverUserId, deviceId: k.deviceId })));
+          return null;
+        }
+      });
+    }
+    if (addedPeer) await markSeen(peer);
   }
 
   /** The certificate names the device the server said, under the person key pinned for that member. */
@@ -509,14 +520,15 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       const d = await ownDevice();
       const open = await load(conversationId);
       if (!open || !(await catchUp(open))) throw new MlsDriverError("not_in_group", "This device isn't in that group.");
-      if (!reconciled.has(conversationId)) {
-        await reconcile(open, peer, true);
-        reconciled.add(conversationId);
-      }
+      if (!reconciled.has(conversationId)) await reconcile(open, peer, true);
       const people = await peopleIn(conversationId, open.state);
       if (people.some((p) => p !== self && p !== peer)) {
         throw new MlsDriverError("unexpected_member", "Somebody other than the two of you is in this group.");
       }
+      if (!people.includes(peer)) {
+        throw new MlsDriverError("peer_unverified", "None of their devices could be added. Is their person key pinned?");
+      }
+      reconciled.add(conversationId);
 
       const out = await encryptMlsMessage(open.state, plaintext);
       open.state = out.state;
