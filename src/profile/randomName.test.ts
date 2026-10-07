@@ -6,7 +6,7 @@ import { NAME_POOL, pickRandomName } from "./randomName.ts";
 test("the pool is big enough that a room rarely doubles up", () => {
   // The size is the whole reason for the list: two people called the same
   // thing in a member list is the confusion the shared placeholder caused.
-  assert.ok(NAME_POOL.length >= 150, `pool is only ${NAME_POOL.length}`);
+  assert.ok(NAME_POOL.length >= 600, `pool is only ${NAME_POOL.length}`);
 });
 
 test("every name is unique", () => {
