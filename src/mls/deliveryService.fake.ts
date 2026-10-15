@@ -206,7 +206,8 @@ export class FakeDeliveryService {
         if (conversationId === undefined) {
           const devices = this.devicesOf([me]).map((d) => {
             const at = this.deviceAddedAt.get(d.deviceId);
-            return at ? { ...d, createdAt: at, lastSeenAt: at } : d;
+            const lastResort = [...this.keyPackages].reverse().find((k) => k.deviceId === d.deviceId && k.lastResort)?.data ?? null;
+            return { ...d, ...(at ? { createdAt: at, lastSeenAt: at } : {}), lastResortKeyPackage: lastResort };
           });
           return { ok: true, devices };
         }

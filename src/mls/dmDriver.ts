@@ -26,6 +26,7 @@ import type {
   DmSealingMode,
   MlsClaimedKeyPackage,
   MlsDeviceRecord,
+  MlsListedDevice,
   MlsDeviceRef,
   MlsDmDriver,
   MlsDmDriverOptions,
@@ -771,8 +772,10 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     }
   }
 
-  /** Names from certificates under your own person key: this device's, then your leaves in each group. */
-  async function ownDeviceNames(d: MlsDeviceRecord, wanted: Set<string>): Promise<Map<string, string>> {
+  /** Names from certificates under your own person key: this device's, your leaves in each group,
+      then the last-resort KeyPackage the server lists with each of your devices. */
+  async function ownDeviceNames(d: MlsDeviceRecord, listed: MlsListedDevice[]): Promise<Map<string, string>> {
+    const wanted = new Set(listed.map((x) => x.deviceId));
     const mine = readDeviceCertificate(d.certificate, scope);
     const names = new Map([[mine.deviceId, mine.deviceName]]);
     const unnamed = () => [...wanted].some((id) => !names.has(id));
@@ -790,6 +793,17 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         }
       }
     }
+    // Checked here, not trusted: a package that doesn't verify, or isn't under your person key, names nothing.
+    for (const x of listed) {
+      if (names.has(x.deviceId) || !x.lastResortKeyPackage) continue;
+      try {
+        const bytes = x.lastResortKeyPackage instanceof Uint8Array ? x.lastResortKeyPackage : new Uint8Array(x.lastResortKeyPackage);
+        const { certificate: c } = await readMlsKeyPackage(bytes, scope);
+        if (c.deviceId === x.deviceId && sameBytes(c.personPublicKey, mine.personPublicKey)) names.set(x.deviceId, c.deviceName);
+      } catch {
+        // Expired or malformed: the device stays unnamed rather than misnamed.
+      }
+    }
     return names;
   }
 
@@ -798,7 +812,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     if (!r.ok) throw refused("Listing devices", r);
     const d = await ownDevice();
     const listed = r.devices.filter((x) => x.serverUserId === self);
-    const names = await ownDeviceNames(d, new Set(listed.map((x) => x.deviceId)));
+    const names = await ownDeviceNames(d, listed);
     return listed.map((x) => ({
       serverUserId: x.serverUserId,
       deviceId: x.deviceId,
