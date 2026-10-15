@@ -340,14 +340,28 @@ describe("MLS DM driver", () => {
     const fromLaptop = await laptop.driver.ownDevices();
     assert.deepEqual(
       fromLaptop.map((d) => [d.name, d.thisDevice]),
-      [["laptop", true], ["phone", false], [null, false]],
-      "the tablet is in no group yet, so nothing here shows its name",
+      [["laptop", true], ["phone", false], ["tablet", false]],
+      "the tablet is in no group yet, so its name comes from the last-resort package (GRYT-1764)",
     );
     assert.ok(fromLaptop.every((d) => d.serverUserId === "kari" && typeof d.addedAt === "string"));
     assert.deepEqual(
       (await tablet.driver.ownDevices()).map((d) => [d.name, d.thisDevice]),
-      [[null, false], [null, false], ["tablet", true]],
+      [["laptop", false], ["phone", false], ["tablet", true]],
     );
+  });
+
+  it("names nothing from a package under somebody else's person key (GRYT-1764)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const laptop = device(fake, "kari", "laptop");
+    const phone = device(fake, "kari", "phone");
+    const intruder = device(fake, "ola", "ola-phone");
+    for (const d of [laptop, phone, intruder]) await d.driver.start();
+    const phoneId = (await phone.driver.ownDevices()).find((d) => d.thisDevice)!.deviceId;
+    const olas = fake.keyPackages.filter((k) => k.serverUserId === "ola" && k.lastResort).at(-1)!;
+    // The server swaps in ola's package for kari's phone: the name must not show.
+    for (const k of fake.keyPackages) if (k.deviceId === phoneId && k.lastResort) k.data = olas.data;
+    const listed = (await laptop.driver.ownDevices()).find((d) => d.deviceId === phoneId);
+    assert.equal(listed?.name, null);
   });
 
   it("never drops back to version 1 once the peer was seen on MLS", async () => {

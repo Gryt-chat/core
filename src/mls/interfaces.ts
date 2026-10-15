@@ -24,6 +24,8 @@ export interface MlsDeviceRef {
 export interface MlsListedDevice extends MlsDeviceRef {
   createdAt?: string;
   lastSeenAt?: string;
+  /** On your own list: the device's last-resort KeyPackage, whose certificate names it (GRYT-1764). */
+  lastResortKeyPackage?: Uint8Array | ArrayBuffer | null;
 }
 
 /** The server's view of a group. `groupId` is lower-case hex. */
