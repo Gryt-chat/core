@@ -158,8 +158,14 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     }
   }
 
+  // attempt() sets both before signIn, run's history step or linked can run.
+  const paired = () => {
+    if (!current?.session) throw new Error("No pairing session yet.");
+    return { ...current, session: current.session };
+  };
+
   async function signIn(account: PairingAccount, from: string): Promise<PairingTokens> {
-    const { id, token, box, session } = current!;
+    const { id, token, box, session } = paired();
     set({ phase: "signing_in", username: account.username, from });
     const verifier = base64Url(randomBytes(32));
     const auth = await oidc.deviceAuthorization({
@@ -168,9 +174,9 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       scope: PAIRING_OIDC_SCOPE,
       codeChallenge: base64Url(sha256(new TextEncoder().encode(verifier))),
       codeChallengeMethod: "S256",
-      nonce: session!.keycloakNonce,
+      nonce: session.keycloakNonce,
     });
-    await relay.post(id, token, { type: "sealed", body: sealJson(session!, { t: "user_code", userCode: auth.userCode }) });
+    await relay.post(id, token, { type: "sealed", body: sealJson(session, { t: "user_code", userCode: auth.userCode }) });
 
     // A sends nothing more here, so anything from the relay (a close, most likely) stops the polling.
     const stop = new AbortController();
@@ -194,7 +200,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
           codeVerifier: verifier,
         });
         if (failure) throw failure;
-        if (polled.status === "ok") return checkIdToken(polled.tokens, account, session!.keycloakNonce);
+        if (polled.status === "ok") return checkIdToken(polled.tokens, account, session.keycloakNonce);
         // RFC 8628's own two terminal errors, plus what auth#46 leaves behind when A's approve
         // endpoint refuses the code: either way N's device grant sees it as denied.
         if (polled.status === "denied") throw new PairingEnded("access_denied");
@@ -217,7 +223,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       const tokens = envelope.account ? await signIn(envelope.account, envelope.from) : null;
       await storage.commit(envelope, tokens);
       if (envelope.history && options.history) {
-        const { id, token } = current!;
+        const { id, token } = paired();
         receiver = createHistoryReceiver({
           relay, id, token, key: envelope.history.key, sink: options.history, clock, signal: abort.signal, onProgress: setHistory,
         });
@@ -231,7 +237,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
 
   /** Reads A's history messages until every chunk is in, or A closing is the finish. */
   async function linked(from: string) {
-    const { box, session } = current!;
+    const { box, session } = paired();
     const stop = new AbortController();
     const onAbort = () => stop.abort();
     abort.signal.addEventListener("abort", onAbort, { once: true });
@@ -239,7 +245,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     receiver?.done.then(onAbort, () => ((failed = true), onAbort()));
     try {
       for (;;) {
-        const body = openJson(session!, await box.next(stop.signal), "history");
+        const body = openJson(session, await box.next(stop.signal), "history");
         if (receiver) receiver.list(body);
         // No sink here: nothing to fetch, so A's last message is the finish.
         else if (body.final === true) throw (stop.abort(), new Error("finished"));

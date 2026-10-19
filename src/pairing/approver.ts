@@ -136,6 +136,11 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     await closeQuietly();
   };
   const fail = (e: unknown) => (abort.signal.aborted ? undefined : end(reasonFor(e)));
+  // Only reached past "confirming", which claim() enters with all three set.
+  const confirmed = () => {
+    if (!current?.session || !device) throw new Error("Nothing confirmed yet.");
+    return { ...current, session: current.session, device };
+  };
 
   async function claim(input: { qr: string } | { code: string }) {
     let by: { id: string } | { code: string };
@@ -200,7 +205,7 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     const res = await fetch(`${issuer.replace(/\/+$/, "")}/gryt-pairing/approve`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ user_code: userCode, binding: current!.session!.keycloakNonce }),
+      body: JSON.stringify({ user_code: userCode, binding: confirmed().session.keycloakNonce }),
     }).catch(() => {
       throw new PairingEnded("approve:network");
     });
@@ -219,7 +224,7 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
       for (let tries = 0; ; tries++) {
         try {
           added[host] = await driver.addOwnDevice(deviceId, {
-            onProgress: ({ done, total }) => set({ phase: "adding", device: device!, host, done, total }),
+            onProgress: ({ done, total }) => set({ phase: "adding", device: confirmed().device, host, done, total }),
           });
           break;
         } catch (e) {
@@ -243,18 +248,18 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
   }
 
   function startHistory(archive: HistoryArchive) {
-    const { id, token, session } = current!;
+    const { id, token, session } = confirmed();
     return createHistorySender({
       relay, id, token, archive, clock, signal: abort.signal,
       post: (message: HistoryMessage) =>
-        relay.post(id, token, { type: "sealed", body: sealJson(session!, message as unknown as Record<string, unknown>) }),
+        relay.post(id, token, { type: "sealed", body: sealJson(session, message) }),
       onProgress: setHistory,
     });
   }
 
   async function approve(envelope: PairingEnvelope, accessToken?: () => Promise<string>) {
-    const { id, token, box, session } = current!;
-    set({ phase: envelope.account ? "signing_in" : "waiting_ready", device: device! });
+    const { id, token, box, session, device } = confirmed();
+    set({ phase: envelope.account ? "signing_in" : "waiting_ready", device });
     let sender: ReturnType<typeof createHistorySender> | null = null;
     let snap = new Map<string, Map<string, number>>();
     let sealed = envelope;
@@ -266,20 +271,20 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
       const chunks = await sender.forEnvelope(Math.min(clock.now() + ENVELOPE_BUDGET_MS, deadline - 10_000));
       sealed = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks } } };
     }
-    await relay.post(id, token, { type: "sealed", body: base64Url(session!.seal(encodePairingEnvelope(sealed))) });
+    await relay.post(id, token, { type: "sealed", body: base64Url(session.seal(encodePairingEnvelope(sealed))) });
 
     if (envelope.account && accessToken) {
       const message = await box.next(abort.signal, clock.now() + approvalMs);
       if (!message) throw new PairingEnded("timed_out");
-      const userCode = String(openJson(session!, message, "user_code").userCode ?? "");
+      const userCode = String(openJson(session, message, "user_code").userCode ?? "");
       if (!(await approveExtension(envelope.account.issuer, userCode, accessToken))) {
         const url = `${envelope.account.issuer.replace(/\/+$/, "")}/device?user_code=${encodeURIComponent(userCode)}`;
-        set({ phase: "browser", device: device!, url });
+        set({ phase: "browser", device, url });
       }
     }
-    if (state.phase === "signing_in") set({ phase: "waiting_ready", device: device! });
+    if (state.phase === "signing_in") set({ phase: "waiting_ready", device });
 
-    const ready = openJson(session!, await box.next(abort.signal), "ready");
+    const ready = openJson(session, await box.next(abort.signal), "ready");
     const list = Array.isArray(ready.devices) ? ready.devices : [];
     const named = list.filter(
       (d): d is PairedServerDevice => typeof d?.host === "string" && typeof d?.deviceId === "string",
@@ -287,18 +292,18 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     sender?.startPaging();
     const added = await addEverywhere(named);
     if (!sender) {
-      set({ phase: "done", device: device!, added });
-      session!.close();
+      set({ phase: "done", device, added });
+      session.close();
       return void (await closeQuietly());
     }
 
-    set({ phase: "sending", device: device!, added });
+    set({ phase: "sending", device, added });
     await sender.send(tail.take(snap, added), false);
     await clock.sleep(options.lateWindowMs ?? HISTORY_LATE_WINDOW_MS, abort.signal);
     await sender.send(tail.take(snap, added), true);
     // N closes the session once it has every chunk; closing here would delete them.
-    set({ phase: "done", device: device!, added });
-    session!.close();
+    set({ phase: "done", device, added });
+    session.close();
   }
 
   return {

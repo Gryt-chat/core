@@ -79,7 +79,6 @@ export default tseslint.config(
     files: [
       "src/mls/addOwnDevice.test.ts",
       "src/mls/deliveryService.fake.ts",
-      "src/pairing/approver.ts",
       "src/servers/address.test.ts",
     ],
     rules: { "no-restricted-syntax": "off" },
@@ -87,14 +86,6 @@ export default tseslint.config(
   // Tests and fakes may assert non-null: a wrong guess fails the test, which is the point.
   {
     files: ["**/*.test.ts", "**/*.fake.ts"],
-    rules: { "@typescript-eslint/no-non-null-assertion": "off" },
-  },
-  // Non-null assertions from before the rule.
-  {
-    files: [
-      "src/pairing/approver.ts",
-      "src/pairing/newDevice.ts",
-    ],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
   },
 );
