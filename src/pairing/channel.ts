@@ -33,7 +33,7 @@ export function reasonFor(error: unknown): PairingEndReason {
   return "relay_error";
 }
 
-export function sealJson(session: PairingSession, value: Record<string, unknown>): string {
+export function sealJson(session: PairingSession, value: object): string {
   return base64Url(session.seal(new TextEncoder().encode(JSON.stringify(value))));
 }
 
