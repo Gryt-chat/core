@@ -65,7 +65,10 @@ export function mailbox(relay: PairingRelay, id: string, token: string, clock: P
         if (left <= 0) return null;
         try {
           for (const m of await relay.poll(id, token, after, Math.min(25, Math.ceil(left / 1000)), signal)) {
-            if (m.seq > after) (queue.push(m), (after = m.seq));
+            if (m.seq > after) {
+              queue.push(m);
+              after = m.seq;
+            }
           }
           failures = 0;
         } catch (e) {

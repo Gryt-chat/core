@@ -144,7 +144,10 @@ export class FakeRelay {
     Object.assign(s, { code: null, state: "claimed", claimedAt: this.clock.now(), expiresAt: this.clock.now() + 2 * 60_000 });
     s.tokens.a = token;
     let pkA = input.pkA;
-    if (s.mitm) (s.mitm.pkA = pkA), (pkA = base64Url(s.mitm.toN.publicKey));
+    if (s.mitm) {
+      s.mitm.pkA = pkA;
+      pkA = base64Url(s.mitm.toN.publicKey);
+    }
     this.push(s, "a", { type: "claim", pkA });
     return { id: s.id, token, commit: s.commit, location: "Oslo, Norway", yourLocation: "Bergen, Norway" };
   }
@@ -154,15 +157,16 @@ export class FakeRelay {
     if (++s.posted > 64) throw new Refusal(429, "too_many_messages");
     if (m.type === "reveal") {
       if (side !== "n" || s.state !== "claimed") throw new Refusal(409, "already_revealed");
+      let pkNForN = m.pkN;
       if (s.mitm) {
         const sessionId = decodePairingSessionId(s.id)!;
         const pkN = base64UrlDecode(m.pkN!);
         s.mitm.n = startApproverSession(s.mitm.toN, { sessionId, commitment: base64UrlDecode(s.mitm.realCommit), newDevicePublicKey: pkN });
         s.mitm.a = startNewDeviceSession(s.mitm.toA, { sessionId, approverPublicKey: base64UrlDecode(s.mitm.pkA!) });
-        m = { type: "reveal", pkN: base64Url(s.mitm.toA.publicKey) };
+        pkNForN = base64Url(s.mitm.toA.publicKey);
       }
       s.state = "revealed";
-      return this.push(s, "n", { type: "reveal", pkN: m.pkN });
+      return this.push(s, "n", { type: "reveal", pkN: pkNForN });
     }
     if (s.state === "open" || s.state === "claimed") throw new Refusal(409, "not_revealed");
     if (side === "a" && s.state === "revealed") Object.assign(s, { state: "approved", expiresAt: s.claimedAt + 60 * 60_000 });
@@ -222,8 +226,9 @@ export class FakeRelay {
   readonly log: { id: string; side: Side; msg: Msg }[] = [];
 
   private async poll(id: string, token: string | undefined, after: number, waitMs: number, signal?: AbortSignal) {
-    let { s, side } = this.find(id, token);
-    const from: Side = side === "n" ? "a" : "n";
+    const found = this.find(id, token);
+    let { s } = found;
+    const from: Side = found.side === "n" ? "a" : "n";
     s.sent[from] = s.sent[from].filter((m) => m.seq > after);
     const deadline = this.clock.now() + waitMs;
     while (s.sent[from].length === 0 && this.clock.now() < deadline) {

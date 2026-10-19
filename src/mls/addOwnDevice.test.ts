@@ -14,7 +14,7 @@ import {
 
 import { FakeDeliveryService, MemoryMlsStore } from "./deliveryService.fake.ts";
 import { createMlsDmDriver, MlsDriverError } from "./dmDriver.ts";
-import type { MlsDecryptedMessage, MlsOwnDeviceAdd, MlsTransport } from "./interfaces.ts";
+import type { MlsDecryptedMessage, MlsTransport } from "./interfaces.ts";
 import { mlsPinsFromPeerPins } from "./pins.ts";
 
 const SCOPE = asIdentityScope("srv:pairing-test");
@@ -98,8 +98,6 @@ async function pairingSetup() {
   };
   return { fake, dm, laptop, ola, desk, publishDesk };
 }
-
-const addFor = (results: MlsOwnDeviceAdd[], conversationId: string) => results.find((r) => r.conversationId === conversationId)!;
 
 describe("adding your own new device (pairing)", () => {
   it("adds the new device to all three DMs, with progress for each", async () => {

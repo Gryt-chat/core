@@ -7,7 +7,9 @@ export const dayOf = (sentAt: number) => Math.floor(sentAt / DAY_MS);
 
 /** Negative when `a` is newer: by time, then by message id, the same order the archive pages in. */
 export function newerFirst(a: HistoryCursor, b: HistoryCursor): number {
-  return b.sentAt - a.sentAt || (a.messageId < b.messageId ? 1 : a.messageId > b.messageId ? -1 : 0);
+  if (a.sentAt !== b.sentAt) return b.sentAt - a.sentAt;
+  if (a.messageId === b.messageId) return 0;
+  return a.messageId < b.messageId ? 1 : -1;
 }
 
 interface Walk extends HistoryConversation {
