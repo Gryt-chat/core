@@ -5,8 +5,8 @@ import { dirname, join, resolve } from "node:path";
 
 const dist = resolve(import.meta.dirname, "../dist");
 
-async function files(dir) {
-  const out = [];
+async function files(dir: string): Promise<string[]> {
+  const out: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const p = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...(await files(p)));
@@ -15,7 +15,7 @@ async function files(dir) {
   return out;
 }
 
-async function isDirectory(p) {
+async function isDirectory(p: string) {
   try {
     return (await stat(p)).isDirectory();
   } catch {

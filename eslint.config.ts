@@ -1,9 +1,8 @@
-// @ts-check
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist/**", "**/*.js", "**/*.mjs", "**/*.cjs", "*.tgz"] },
+  { ignores: ["dist/**", "*.tgz"] },
   js.configs.recommended,
   tseslint.configs.recommended,
   // Our own values get real types; existing debt is listed below, the goal is to empty it (GRYT-1792).
