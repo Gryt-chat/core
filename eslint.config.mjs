@@ -74,13 +74,9 @@ export default tseslint.config(
     ],
     rules: { "@typescript-eslint/no-restricted-types": "off" },
   },
-  // Casts through unknown where the types don't line up yet.
+  // Tests and fakes may cast through unknown to hand a fake where the real type is wide.
   {
-    files: [
-      "src/mls/addOwnDevice.test.ts",
-      "src/mls/deliveryService.fake.ts",
-      "src/servers/address.test.ts",
-    ],
+    files: ["**/*.test.ts", "**/*.fake.ts"],
     rules: { "no-restricted-syntax": "off" },
   },
   // Tests and fakes may assert non-null: a wrong guess fails the test, which is the point.
