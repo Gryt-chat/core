@@ -23,6 +23,8 @@ export default tseslint.config(
       "no-param-reassign": "error",
       "@typescript-eslint/no-non-null-assertion": "error",
       "@typescript-eslint/consistent-type-imports": ["error", { fixStyle: "inline-type-imports", disallowTypeAnnotations: false }],
+      // Dropping a key with `{ key, ...rest }` is how we omit one.
+      "@typescript-eslint/no-unused-vars": ["error", { ignoreRestSiblings: true }],
     },
   },
   // unknown: tests build loose values on purpose.
@@ -60,6 +62,7 @@ export default tseslint.config(
   {
     files: [
       "src/pairing/approver.ts",
+      "src/pairing/interfaces.ts",
       "src/pairing/relayClient.ts",
     ],
     rules: { "@typescript-eslint/no-restricted-types": "off" },
@@ -68,14 +71,6 @@ export default tseslint.config(
   {
     files: [
       "src/pairing/historyReceiver.ts",
-    ],
-    rules: { "@typescript-eslint/no-restricted-types": "off" },
-  },
-  // unknown: not typed yet.
-  {
-    files: [
-      "src/pairing/interfaces.ts",
-      "src/reports/report.ts",
     ],
     rules: { "@typescript-eslint/no-restricted-types": "off" },
   },
@@ -102,45 +97,5 @@ export default tseslint.config(
       "src/pairing/relay.fake.ts",
     ],
     rules: { "@typescript-eslint/no-non-null-assertion": "off" },
-  },
-  // @typescript-eslint/no-unused-vars: from before ESLint ran here.
-  {
-    files: [
-      "src/mls/addOwnDevice.test.ts",
-      "src/pairing/historySender.ts",
-    ],
-    rules: { "@typescript-eslint/no-unused-vars": "off" },
-  },
-  // Nested ternaries from before the rule.
-  {
-    files: [
-      "src/mls/deliveryService.fake.ts",
-      "src/pairing/historySnapshot.ts",
-      "src/reports/report.ts",
-    ],
-    rules: { "no-nested-ternary": "off" },
-  },
-  // Reassigned parameters from before the rule.
-  {
-    files: [
-      "src/pairing/approver.ts",
-      "src/pairing/relay.fake.ts",
-    ],
-    rules: { "no-param-reassign": "off" },
-  },
-  // @typescript-eslint/no-unused-expressions: from before ESLint ran here.
-  {
-    files: [
-      "src/pairing/channel.ts",
-      "src/pairing/relay.fake.ts",
-    ],
-    rules: { "@typescript-eslint/no-unused-expressions": "off" },
-  },
-  // let that could be const, from before the rule.
-  {
-    files: [
-      "src/pairing/relay.fake.ts",
-    ],
-    rules: { "prefer-const": "off" },
   },
 );

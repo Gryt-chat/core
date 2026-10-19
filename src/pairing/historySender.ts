@@ -160,7 +160,7 @@ export function createHistorySender(options: HistorySenderOptions) {
       const listed = unlisted.splice(0, HISTORY_ENVELOPE_ENTRIES);
       progress.listed += listed.length;
       report();
-      return listed.map(({ n: _n, ...entry }) => entry);
+      return listed.map(({ n, ...entry }) => entry);
     },
     /** After N's "ready": list what's waiting, and keep listing as pages fill. */
     startPaging() {

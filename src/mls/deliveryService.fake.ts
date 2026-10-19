@@ -343,9 +343,11 @@ export class FakeDeliveryService {
   }
 
   private checkParts(socket: Socket, event: string, value: unknown): void {
-    const count = (v: unknown): number =>
-      v instanceof Uint8Array ? 1 : Array.isArray(v) ? v.reduce((n: number, x) => n + count(x), 0)
-        : v && typeof v === "object" ? Object.values(v).reduce((n: number, x) => n + count(x), 0) : 0;
+    const count = (v: unknown): number => {
+      if (v instanceof Uint8Array) return 1;
+      if (v && typeof v === "object") return Object.values(v).reduce((n: number, x) => n + count(x), 0);
+      return 0;
+    };
     const parts = count(value);
     this.stats.mostBinaryParts = Math.max(this.stats.mostBinaryParts, parts);
     if (parts > 10) {

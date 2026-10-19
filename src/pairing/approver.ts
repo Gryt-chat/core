@@ -257,15 +257,16 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     set({ phase: envelope.account ? "signing_in" : "waiting_ready", device: device! });
     let sender: ReturnType<typeof createHistorySender> | null = null;
     let snap = new Map<string, Map<string, number>>();
+    let sealed = envelope;
     if (options.history) {
       // Recording starts before the positions are read, so nothing lands between the two unseen.
       tail.start();
       snap = await positions(envelope);
       sender = startHistory(options.history);
       const chunks = await sender.forEnvelope(Math.min(clock.now() + ENVELOPE_BUDGET_MS, deadline - 10_000));
-      envelope = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks } } };
+      sealed = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks } } };
     }
-    await relay.post(id, token, { type: "sealed", body: base64Url(session!.seal(encodePairingEnvelope(envelope))) });
+    await relay.post(id, token, { type: "sealed", body: base64Url(session!.seal(encodePairingEnvelope(sealed))) });
 
     if (envelope.account && accessToken) {
       const message = await box.next(abort.signal, clock.now() + approvalMs);

@@ -45,7 +45,7 @@ export interface Report {
   };
   /** The tail of the app's own log, where it keeps one. */
   logs?: string[];
-  extra?: Record<string, unknown>;
+  extra?: { embeddedServer?: boolean; embeddedServerVersion?: string };
 }
 
 /**
@@ -213,11 +213,7 @@ export function describeAttached(report: Report): { label: string; value: string
   add("Channel", report.app?.channel);
   add(
     "System",
-    device?.platform && device?.osVersion
-      ? `${platformLabel(device.platform)} ${device.osVersion}`
-      : device?.platform
-        ? platformLabel(device.platform)
-        : undefined,
+    device?.platform ? [platformLabel(device.platform), device.osVersion].filter(Boolean).join(" ") : undefined,
   );
   add("Simulator", device?.isEmulator ? "yes" : undefined);
   add("Electron", report.runtime?.electronVersion);
