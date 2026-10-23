@@ -803,3 +803,17 @@ describe("MLS DM driver, a device nobody added (GRYT-1858)", () => {
     await assert.rejects(kari.driver.send(dm, "ola", text("x")), isCode("peer_unverified"));
   });
 });
+
+describe("MLS DM driver, more than five devices (GRYT-1872)", () => {
+  it("adds every one of somebody's six devices to a DM", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const ola = device(fake, "ola", "phone");
+    const karis = Array.from({ length: 6 }, (_, i) => device(fake, "kari", `device ${i + 1}`));
+    for (const d of [ola, ...karis]) await d.driver.start();
+
+    await ola.driver.send(dm, "kari", text("hei alle"));
+    await fake.settle();
+    for (const d of karis) assert.deepEqual(d.texts(), ["ola: hei alle"]);
+  });
+});

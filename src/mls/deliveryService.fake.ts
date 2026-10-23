@@ -16,7 +16,7 @@ import type {
   MlsWelcomeDelivery,
 } from "./interfaces.js";
 
-const MAX_DEVICES = 5;
+const MAX_DEVICES = 25;
 const MAX_KEY_PACKAGES = 20;
 const MAX_LOG_PAGE = 200;
 const DUPLICATE_WINDOW = 100;
@@ -150,7 +150,7 @@ export class FakeDeliveryService {
         this.stats.publishes += 1;
         const isNew = !this.isDevice(me, deviceId);
         if (isNew && (this.devices.get(me) ?? []).length >= MAX_DEVICES) {
-          return fail("too_many_devices", "You have five devices using encrypted messages here.");
+          return fail("too_many_devices", "You have 25 devices using encrypted messages here.");
         }
         const raw = [...keyPackages.map((b) => ({ b, lastResort: false }))];
         if (lastResort) raw.push({ b: lastResort, lastResort: true });
