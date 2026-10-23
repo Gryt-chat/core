@@ -45,6 +45,7 @@ interface GroupRow {
   epoch: number;
   headSeq: number;
   log: MlsLogEntry[];
+  info?: { epoch: number; data: Uint8Array };
 }
 
 interface Socket {
@@ -310,6 +311,25 @@ export class FakeDeliveryService {
         const before = this.welcomes.length;
         this.welcomes = this.welcomes.filter((w) => !(w.serverUserId === me && w.deviceId === deviceId && welcomeIds.includes(w.welcomeId)));
         return { ok: true, deleted: before - this.welcomes.length };
+      },
+
+      putGroupInfo: async ({ conversationId, deviceId, groupInfo }) => {
+        await tick();
+        if (!member(conversationId)) return fail("not_found", "No such conversation.");
+        if (!this.isDevice(me, deviceId)) return fail("unknown_device", "Publish KeyPackages from this device first.");
+        const g = this.groups.get(conversationId);
+        if (!g) return fail("no_group", "This conversation has no group yet.");
+        g.info = { epoch: g.epoch, data: groupInfo.slice() };
+        return { ok: true };
+      },
+
+      getGroupInfo: async ({ conversationId, deviceId }) => {
+        await tick();
+        if (!member(conversationId)) return fail("not_found", "No such conversation.");
+        if (!this.isDevice(me, deviceId)) return fail("unknown_device", "Publish KeyPackages from this device first.");
+        const g = this.groups.get(conversationId);
+        if (!g?.info || g.info.epoch !== g.epoch) return fail("no_group_info", "There's nothing to join from yet.");
+        return { ok: true, epoch: g.info.epoch, groupInfo: g.info.data.slice() };
       },
 
       requestAdd: async ({ conversationId, deviceId }) => {
