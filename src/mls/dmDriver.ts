@@ -42,7 +42,7 @@ import type {
 import type { MlsAddOwnDeviceOptions, MlsGroupPosition, MlsOwnDeviceAdd } from "./interfaces.js";
 
 /** Devices per person per server. Must match the server's MLS_MAX_DEVICES, or extra devices are left out quietly. */
-const MLS_MAX_DEVICES_PER_PERSON = 25;
+const MLS_MAX_DEVICES_PER_PERSON = 100;
 const COMMIT_ATTEMPTS = 5;
 /** socket.io closes the connection on a packet with more than 10 binary parts (GRYT-1522). */
 const MAX_BINARY_PARTS = 10;
