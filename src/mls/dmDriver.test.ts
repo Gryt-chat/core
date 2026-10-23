@@ -745,3 +745,61 @@ describe("MLS DM driver, sending across a lost connection (GRYT-1584)", () => {
     await assert.rejects(kari.driver.send(dm, "ola", text("future")), isCode("refused"));
   });
 });
+
+describe("MLS DM driver, a device nobody added (GRYT-1858)", () => {
+  const isCode = (code: string) => (e: unknown) => e instanceof MlsDriverError && e.code === code;
+
+  /* Kari's phone and Ola have a group; Kari's laptop registers after, and nobody has sent since. */
+  async function lateLaptop() {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+    const laptop = device(fake, "kari", "laptop");
+    await laptop.driver.start();
+    await fake.settle();
+    return { fake, dm, phone, ola, laptop };
+  }
+
+  it("asks to be added on its first send, and the send goes through", async () => {
+    const { fake, dm, ola, laptop } = await lateLaptop();
+    await laptop.driver.send(dm, "ola", text("from the laptop"));
+    await fake.settle();
+    assert.ok(ola.texts().includes("kari: from the laptop"));
+  });
+
+  it("says it isn't in the group when a message comes for it, and joins once asked again", async () => {
+    const { fake, dm, ola, laptop } = await lateLaptop();
+    const laptopId = laptop.store.device!.deviceId;
+    for (const k of fake.keyPackages) if (k.deviceId === laptopId) k.claimed = true;
+
+    await ola.driver.send(dm, "kari", text("one"));
+    await fake.settle();
+    await new Promise((resolve) => setTimeout(resolve, 3_100));
+    assert.equal(laptop.store.groups.size, 0, "Ola had no package to add it with");
+    assert.deepEqual(laptop.lost.at(-1), { conversationId: dm, reason: "not_added" });
+
+    await laptop.driver.start();
+    await laptop.driver.requestAdd(dm);
+    await fake.settle();
+    await ola.driver.send(dm, "kari", text("two"));
+    await fake.settle();
+    assert.deepEqual(laptop.texts(), ["ola: two"]);
+  });
+
+  it("says the peer's key isn't checked when it holds a Welcome it can't join", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const kari = device(fake, "kari", "laptop", { unpinned: ["ola"] });
+    const ola = device(fake, "ola", "phone");
+    await kari.driver.start();
+    await ola.driver.start();
+    await ola.driver.send(dm, "kari", text("hei"));
+    await fake.settle();
+    await assert.rejects(kari.driver.send(dm, "ola", text("x")), isCode("peer_unverified"));
+  });
+});
