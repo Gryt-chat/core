@@ -774,6 +774,8 @@ describe("MLS DM driver, a device nobody added (GRYT-1858)", () => {
 
   it("says it isn't in the group when a message comes for it, and joins once asked again", async () => {
     const { fake, dm, ola, laptop } = await lateLaptop();
+    // No GroupInfo, so the laptop can't join by itself and has to ask.
+    fake.groups.get(dm)!.info = undefined;
     const laptopId = laptop.store.device!.deviceId;
     for (const k of fake.keyPackages) if (k.deviceId === laptopId) k.claimed = true;
 
@@ -815,5 +817,55 @@ describe("MLS DM driver, more than five devices (GRYT-1872)", () => {
     await ola.driver.send(dm, "kari", text("hei alle"));
     await fake.settle();
     for (const d of karis) assert.deepEqual(d.texts(), ["ola: hei alle"]);
+  });
+});
+
+describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
+  it("lets a new device in from the GroupInfo while every other device is closed", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+
+    phone.socket.online = false;
+    ola.socket.online = false;
+    const laptop = device(fake, "kari", "laptop");
+    await laptop.driver.start();
+    await laptop.driver.send(dm, "ola", text("fra laptopen"));
+    assert.equal(fake.welcomes.length, 0, "nobody had to add it");
+
+    ola.socket.online = true;
+    phone.socket.online = true;
+    await ola.driver.start();
+    await phone.driver.start();
+    await fake.settle();
+    assert.ok(ola.texts().includes("kari: fra laptopen"));
+    assert.ok(phone.texts().includes("kari: fra laptopen"));
+
+    await ola.driver.send(dm, "kari", text("hei laptop"));
+    await fake.settle();
+    assert.deepEqual(laptop.texts(), ["ola: hei laptop"]);
+  });
+
+  it("asks to be added when there's no GroupInfo to join from", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+    fake.groups.get(dm)!.info = undefined;
+
+    const laptop = device(fake, "kari", "laptop");
+    await laptop.driver.start();
+    await laptop.driver.send(dm, "ola", text("via a request"));
+    await fake.settle();
+    assert.ok(ola.texts().includes("kari: via a request"));
   });
 });

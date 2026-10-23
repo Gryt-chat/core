@@ -9,7 +9,9 @@ import {
   forgetMlsSecrets,
   generateMlsKeyPackage,
   joinMlsGroup,
+  joinMlsGroupExternally,
   mlsGroupInfo,
+  mlsGroupInfoForJoining,
   mlsGroupMembers,
   mlsWelcomeRefs,
   processMlsMessage,
@@ -161,6 +163,8 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   }
   const raw = options.transport;
   const rawRequestAdd = raw.requestAdd?.bind(raw);
+  const rawPutGroupInfo = raw.putGroupInfo?.bind(raw);
+  const rawGetGroupInfo = raw.getGroupInfo?.bind(raw);
   const transport: MlsTransport = {
     publishKeyPackages: stopOnRemoval((req) => raw.publishKeyPackages(req)),
     claimKeyPackages: stopOnRemoval((req) => raw.claimKeyPackages(req)),
@@ -173,6 +177,8 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     sync: stopOnRemoval((req) => raw.sync(req)),
     ackWelcomes: stopOnRemoval((req) => raw.ackWelcomes(req)),
     ...(rawRequestAdd ? { requestAdd: stopOnRemoval(rawRequestAdd) } : {}),
+    ...(rawPutGroupInfo ? { putGroupInfo: stopOnRemoval(rawPutGroupInfo) } : {}),
+    ...(rawGetGroupInfo ? { getGroupInfo: stopOnRemoval(rawGetGroupInfo) } : {}),
   };
   const scope = asIdentityScope(options.scope);
   const trusts = new Map<string, MlsTrust>();
@@ -356,7 +362,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         return false;
       } else {
         try {
-          const r = await processMlsMessage(open.state, e.data);
+          const r = await processMlsMessage(open.state, e.data, scope);
           if (r.kind === "handshake" && r.removed) {
             await store.deleteGroup(open.rec.conversationId);
             left.add(open.rec.conversationId);
@@ -453,6 +459,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         forgetMlsSecrets(c.consumed);
         open.rec = { ...open.rec, pending: undefined };
         await save(open);
+        void publishGroupInfo(open);
         return;
       }
       open.rec = { ...open.rec, pending: undefined };
@@ -587,6 +594,48 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     });
   }
 
+  /** For the next device of either person to join by itself. An old server has nowhere to keep it. */
+  async function publishGroupInfo(open: Open): Promise<void> {
+    if (!transport.putGroupInfo) return;
+    try {
+      const groupInfo = await mlsGroupInfoForJoining(open.state);
+      await transport.putGroupInfo({ conversationId: open.rec.conversationId, deviceId: (await ownDevice()).deviceId, groupInfo });
+    } catch {
+      // A stale epoch or an old server: the next commit uploads one again.
+    }
+  }
+
+  /* Joins from the GroupInfo a member left, with nobody else online (GRYT-1859). False when
+     there's none, it's behind, or this server can't: then the device asks to be added. */
+  async function joinByItself(conversationId: string): Promise<boolean> {
+    if (!transport.getGroupInfo) return false;
+    const d = await ownDevice();
+    const got = await transport.getGroupInfo({ conversationId, deviceId: d.deviceId }).catch(() => null);
+    if (!got?.ok) return false;
+    return run(conversationId, async () => {
+      if (await store.loadGroup(conversationId)) return true;
+      let joined: { state: MlsGroupState; commit: Uint8Array };
+      try {
+        joined = await joinMlsGroupExternally({ groupInfo: got.groupInfo, device: d, trust: trustFor(conversationId) });
+      } catch {
+        return false;
+      }
+      const r = await transport.commit({ conversationId, deviceId: d.deviceId, commit: joined.commit });
+      if (!r.ok) return false;
+      const open: Open = {
+        rec: { conversationId, groupId: groupIdOf(joined.state), state: new Uint8Array(), cursor: r.seq, joinedEpoch: epochOf(joined.state) },
+        state: joined.state,
+      };
+      await save(open);
+      await notePeople(conversationId, joined.state);
+      reconciled.delete(conversationId);
+      left.delete(conversationId);
+      events.onJoined?.({ conversationId, groupId: open.rec.groupId });
+      void publishGroupInfo(open);
+      return true;
+    });
+  }
+
   /* Only a member can add a device, so one that's out asks the members' apps to. An old
      server doesn't answer, which is why nothing waits on it. */
   async function askToBeAdded(conversationId: string, force = false): Promise<void> {
@@ -602,7 +651,9 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       if (stopped || left.has(conversationId) || unjoinable.has(conversationId)) return;
       void store
         .loadGroup(conversationId)
-        .then((rec) => (rec ? undefined : askToBeAdded(conversationId)))
+        .then(async (rec) => {
+          if (!rec && !(await joinByItself(conversationId))) await askToBeAdded(conversationId);
+        })
         .catch(() => undefined);
     }, NOT_ADDED_GRACE_MS);
   }
@@ -614,6 +665,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     if (unjoinable.has(conversationId)) {
       throw new MlsDriverError("peer_unverified", "This device was added, and a member's key isn't pinned here to join with.");
     }
+    if (await joinByItself(conversationId)) return;
     void askToBeAdded(conversationId).catch(() => undefined);
     await waitForWelcome(conversationId);
   }

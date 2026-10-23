@@ -129,6 +129,10 @@ export interface MlsTransport {
   /** This device isn't in that conversation's group: the server asks the members' apps to add it.
       Optional, since a server from before GRYT-1858 doesn't take it. */
   requestAdd?(req: { conversationId: string; deviceId: string }): Promise<MlsReply<object>>;
+
+  /** The group's GroupInfo for its current epoch, so a device of a member can join by itself (GRYT-1859). */
+  putGroupInfo?(req: { conversationId: string; deviceId: string; groupInfo: Uint8Array }): Promise<MlsReply<object>>;
+  getGroupInfo?(req: { conversationId: string; deviceId: string }): Promise<MlsReply<{ epoch: number; groupInfo: Uint8Array }>>;
 }
 
 /** `server:info.mls`. Absent means the server can't do MLS. */
