@@ -51,6 +51,10 @@ const PUBLISH_BATCH = MAX_BINARY_PARTS - 1;
 /** The server's cap on files in one message. */
 const MAX_ATTACHMENT_IDS = 10;
 const WELCOME_WAIT_MS = 10_000;
+/** How often a device out of a group asks to be added, unless the person asks. */
+const ASK_AGAIN_MS = 60_000;
+/** A message can beat the Welcome that comes with it, so a missing group is only news after this. */
+const NOT_ADDED_GRACE_MS = 3_000;
 /** The same cap as a message that isn't MLS: after this a send fails and the text goes back. */
 const SEND_GIVE_UP_MS = 5 * 60_000;
 /** A send with no answer goes again after this, or sooner if the connection comes back. */
@@ -156,6 +160,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     };
   }
   const raw = options.transport;
+  const rawRequestAdd = raw.requestAdd?.bind(raw);
   const transport: MlsTransport = {
     publishKeyPackages: stopOnRemoval((req) => raw.publishKeyPackages(req)),
     claimKeyPackages: stopOnRemoval((req) => raw.claimKeyPackages(req)),
@@ -167,6 +172,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     fetchLog: stopOnRemoval((req) => raw.fetchLog(req)),
     sync: stopOnRemoval((req) => raw.sync(req)),
     ackWelcomes: stopOnRemoval((req) => raw.ackWelcomes(req)),
+    ...(rawRequestAdd ? { requestAdd: stopOnRemoval(rawRequestAdd) } : {}),
   };
   const scope = asIdentityScope(options.scope);
   const trusts = new Map<string, MlsTrust>();
@@ -188,6 +194,11 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   const reconciled = new Set<string>();
   const seen = new Set<string>();
   const welcomeWaiters = new Map<string, (() => void)[]>();
+  /** Conversations with a Welcome for this device that it couldn't join yet, most likely an unpinned member. */
+  const unjoinable = new Set<string>();
+  const asked = new Map<string, number>();
+  /** Groups this device was taken out of here. It doesn't ask its way back into those. */
+  const left = new Set<string>();
 
   /** A send's ciphertext once it has been on the wire, and its seq once the log shows it. */
   interface Flight {
@@ -348,6 +359,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
           const r = await processMlsMessage(open.state, e.data);
           if (r.kind === "handshake" && r.removed) {
             await store.deleteGroup(open.rec.conversationId);
+            left.add(open.rec.conversationId);
             events.onGroupLost?.({ conversationId: open.rec.conversationId, reason: "removed" });
             return false;
           }
@@ -575,10 +587,35 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     });
   }
 
+  /* Only a member can add a device, so one that's out asks the members' apps to. An old
+     server doesn't answer, which is why nothing waits on it. */
+  async function askToBeAdded(conversationId: string, force = false): Promise<void> {
+    events.onGroupLost?.({ conversationId, reason: "not_added" });
+    if (!transport.requestAdd || (!force && Date.now() - (asked.get(conversationId) ?? 0) < ASK_AGAIN_MS)) return;
+    asked.set(conversationId, Date.now());
+    const r = await transport.requestAdd({ conversationId, deviceId: (await ownDevice()).deviceId });
+    if (!r.ok) throw refused("Asking to be added", r);
+  }
+
+  function notAddedLater(conversationId: string): void {
+    setTimeout(() => {
+      if (stopped || left.has(conversationId) || unjoinable.has(conversationId)) return;
+      void store
+        .loadGroup(conversationId)
+        .then((rec) => (rec ? undefined : askToBeAdded(conversationId)))
+        .catch(() => undefined);
+    }, NOT_ADDED_GRACE_MS);
+  }
+
   async function ensureOpen(conversationId: string): Promise<void> {
     if ((await run(conversationId, () => openGroup(conversationId))) === "open") return;
     await takeWaitingWelcomes();
-    if (!(await store.loadGroup(conversationId))) await waitForWelcome(conversationId);
+    if (await store.loadGroup(conversationId)) return;
+    if (unjoinable.has(conversationId)) {
+      throw new MlsDriverError("peer_unverified", "This device was added, and a member's key isn't pinned here to join with.");
+    }
+    void askToBeAdded(conversationId).catch(() => undefined);
+    await waitForWelcome(conversationId);
   }
 
   /** "joined", "not_ours" (ack it and forget it), or "retry" (keep it for next time). */
@@ -624,10 +661,15 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     if (w.deviceId !== d.deviceId || !w.conversationId) return "retry";
     const conversationId = w.conversationId;
     const { result, usedLastResort } = await run(conversationId, () => joinFrom(w));
-    if (result === "retry") return "retry";
+    if (result === "retry") {
+      unjoinable.add(conversationId);
+      return "retry";
+    }
     await transport.ackWelcomes({ deviceId: d.deviceId, welcomeIds: [w.welcomeId] });
     if (result !== "joined") return "done";
     reconciled.delete(conversationId);
+    unjoinable.delete(conversationId);
+    left.delete(conversationId);
     events.onJoined?.({ conversationId, groupId: w.groupId });
     for (const done of welcomeWaiters.get(conversationId) ?? []) done();
     welcomeWaiters.delete(conversationId);
@@ -749,7 +791,12 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   async function handleMessage(entry: MlsLogEntry): Promise<void> {
     await run(entry.conversationId, async () => {
       const open = await load(entry.conversationId);
-      if (!open || entry.seq <= open.rec.cursor) return;
+      if (!open) {
+        // A message for a group this device isn't in: without this it would show nothing.
+        if (entry.kind === "application" && entry.senderDeviceId !== (await ownDevice()).deviceId) notAddedLater(entry.conversationId);
+        return;
+      }
+      if (entry.seq <= open.rec.cursor) return;
       if (entry.seq === open.rec.cursor + 1 && entry.groupId === open.rec.groupId) await applyEntry(open, entry);
       else await catchUp(open);
     });
@@ -770,6 +817,18 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         if (await catchUp(open)) await reconcile(open, peer, false);
       });
     }
+  }
+
+  /** Adds whatever is missing, as a send would. Who asked only says which group to look at. */
+  async function handleAddRequest(push: { conversationId: string; serverUserId: string; deviceId: string }): Promise<void> {
+    if (push.deviceId === (await ownDevice()).deviceId) return;
+    await run(push.conversationId, async () => {
+      const open = await load(push.conversationId);
+      if (!open || !(await catchUp(open))) return;
+      const peer = (await peopleIn(push.conversationId, open.state)).find((p): p is string => !!p && p !== self);
+      if (!peer || (push.serverUserId !== self && push.serverUserId !== peer)) return;
+      await reconcile(open, peer, true);
+    });
   }
 
   /** Names from certificates under your own person key: this device's, your leaves in each group,
@@ -947,6 +1006,8 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     handleMessage,
     handleWelcome,
     handleDevicesChanged,
+    handleAddRequest,
+    requestAdd: (conversationId) => askToBeAdded(conversationId, true),
     ownDevices,
     async removeOwnDevice(deviceId: string) {
       const r = await transport.removeDevice({ deviceId });

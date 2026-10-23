@@ -125,6 +125,10 @@ export interface MlsTransport {
   >;
 
   ackWelcomes(req: { deviceId: string; welcomeIds: string[] }): Promise<MlsReply<{ deleted: number }>>;
+
+  /** This device isn't in that conversation's group: the server asks the members' apps to add it.
+      Optional, since a server from before GRYT-1858 doesn't take it. */
+  requestAdd?(req: { conversationId: string; deviceId: string }): Promise<MlsReply<object>>;
 }
 
 /** `server:info.mls`. Absent means the server can't do MLS. */
@@ -229,7 +233,7 @@ export interface MlsDmEvents {
   /** Sends are held until the connection is back and `start()` has caught up, or not any more. */
   onWaiting?(waiting: boolean): void;
   /** This device is out of the group: removed, or its state couldn't keep up. */
-  onGroupLost?(info: { conversationId: string; reason: "removed" | "out_of_sync" | "gap" }): void;
+  onGroupLost?(info: { conversationId: string; reason: "removed" | "out_of_sync" | "gap" | "not_added" }): void;
   onJoined?(info: { conversationId: string; groupId: string }): void;
   /**
    * The server says this device was removed here (`device_removed`). The driver has stopped for
@@ -319,6 +323,10 @@ export interface MlsDmDriver {
   handleMessage(entry: MlsLogEntry): Promise<void>;
   handleWelcome(welcome: MlsWelcomeDelivery): Promise<void>;
   handleDevicesChanged(push: { serverUserId: string }): Promise<void>;
+  /** `mls:add:requested`: a device of somebody in the conversation asked to be added. */
+  handleAddRequest(push: { conversationId: string; serverUserId: string; deviceId: string }): Promise<void>;
+  /** Asks the other members' apps to add this device, as the driver does when it finds it's out. */
+  requestAdd(conversationId: string): Promise<void>;
   /** Oldest first, as the server lists them. */
   ownDevices(): Promise<MlsOwnDevice[]>;
   /** Your own devices only. Every group you share drops it on the next pass. */

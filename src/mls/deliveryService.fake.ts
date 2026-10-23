@@ -311,6 +311,14 @@ export class FakeDeliveryService {
         this.welcomes = this.welcomes.filter((w) => !(w.serverUserId === me && w.deviceId === deviceId && welcomeIds.includes(w.welcomeId)));
         return { ok: true, deleted: before - this.welcomes.length };
       },
+
+      requestAdd: async ({ conversationId, deviceId }) => {
+        await tick();
+        if (!member(conversationId)) return fail("not_found", "No such conversation.");
+        if (!this.isDevice(me, deviceId)) return fail("unknown_device", "Publish KeyPackages from this device first.");
+        this.push(this.conversations.get(conversationId)!, (d) => d.handleAddRequest({ conversationId, serverUserId: me, deviceId }));
+        return { ok: true };
+      },
     };
 
     // socket.io-parser closes the connection on a packet with more than ten binary parts.
