@@ -931,6 +931,29 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(tablet.texts().includes("ola: welcome back"));
   });
 
+  it("describes a DM for support without creating anything (GRYT-1864)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+    const fresh = device(fake, "kari", "tablet");
+
+    const d = await phone.driver.diagnose(dm);
+    assert.equal(d.deviceId, phone.store.device!.deviceId);
+    assert.equal(d.group?.epoch, 1);
+    assert.deepEqual(new Set(d.inGroup?.map((m) => m.name)), new Set(["phone"]));
+    assert.equal(d.inGroup?.find((m) => m.thisDevice)?.name, "phone");
+    assert.equal(d.listed?.length, 2);
+
+    const none = await fresh.driver.diagnose(dm);
+    assert.equal(none.deviceId, null);
+    assert.equal(fresh.store.device, null, "looking made no device record");
+  });
+
   it("asks to be added when there's no GroupInfo to join from", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "ola");
