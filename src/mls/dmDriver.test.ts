@@ -877,6 +877,35 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.equal(mlsGroupMembers(state, SCOPE).length, 2, "its old leaf went instead of staying beside the new one");
   });
 
+  it("drops a copy that can't follow the log and joins again, so it can still send (GRYT-1862)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const laptop = device(fake, "kari", "laptop");
+    const ola = device(fake, "ola", "phone");
+    await laptop.driver.start();
+    await ola.driver.start();
+    await laptop.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+
+    laptop.socket.online = false;
+    for (const name of ["phone", "tablet"]) {
+      const d = device(fake, "kari", name);
+      await d.driver.start();
+      await d.driver.send(dm, "ola", text(`fra ${name}`));
+      await fake.settle();
+    }
+    // The laptop's copy skips the phone's join, so the tablet's commit is one epoch ahead of it.
+    const rec = laptop.store.groups.get(dm)!;
+    rec.cursor = fake.groups.get(dm)!.log.find((e) => e.seq > rec.cursor && e.kind === "commit")!.seq;
+
+    laptop.socket.online = true;
+    await laptop.driver.start();
+    await laptop.driver.send(dm, "ola", text("tilbake"));
+    await fake.settle();
+    assert.ok(laptop.lost.some((l) => l.reason === "out_of_sync"));
+    assert.ok(ola.texts().includes("kari: tilbake"));
+  });
+
   it("asks to be added when there's no GroupInfo to join from", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "ola");
