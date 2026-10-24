@@ -123,6 +123,7 @@ export type {
   MlsKeyPackageRecord,
   MlsListedDevice,
   MlsLogEntry,
+  MlsDmDiagnostics,
   MlsOwnDevice,
   MlsOwnDeviceAdd,
   MlsPins,
