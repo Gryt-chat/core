@@ -768,11 +768,16 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     const deadline = Date.now() + giveUpMs;
     const flight: Flight = { conversationId, message: null, seq: null };
     flights.add(flight);
+    let rejoined = false;
     try {
       for (;;) {
         try {
           return await sendOnce(flight, peer, plaintext, attachmentIds);
         } catch (e) {
+          if (e instanceof MlsDriverError && e.code === "not_in_group" && !rejoined && !left.has(conversationId)) {
+            rejoined = true;
+            continue;
+          }
           const why = unreachable(e);
           if (!why || stopped) throw e;
           // Offline waits for the next start(). A timeout goes again soon, as the same bytes.
@@ -793,7 +798,11 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     return run(conversationId, async () => {
       const d = await ownDevice();
       const open = await load(conversationId);
-      if (!open || !(await catchUp(open))) throw new MlsDriverError("not_in_group", "This device isn't in that group.");
+      if (!open || !(await catchUp(open))) {
+        // A copy that can't follow the log is dead weight: drop it, so the retry joins again.
+        if (open && !left.has(conversationId) && !flight.message) await store.deleteGroup(conversationId);
+        throw new MlsDriverError("not_in_group", "This device isn't in that group.");
+      }
       if (flight.seq !== null) return { seq: flight.seq };
       if (flight.message) {
         const r = await transport.send({ conversationId, deviceId: d.deviceId, message: flight.message, attachmentIds });
