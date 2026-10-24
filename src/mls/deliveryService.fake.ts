@@ -1,7 +1,14 @@
 /* An in-memory stand-in for the delivery service in Gryt-chat/server#241, for tests only.
    Same answers and pushes; no auth, blocks, rate limits or member checks on adds. */
 
-import { base64UrlDecode, inspectMlsMessage, mlsWelcomeRefs, readMlsKeyPackage, type IdentityScope } from "@gryt/crypto";
+import {
+  base64UrlDecode,
+  inspectMlsMessage,
+  mlsGroupInfoDeviceIds,
+  mlsWelcomeRefs,
+  readMlsKeyPackage,
+  type IdentityScope,
+} from "@gryt/crypto";
 
 import type {
   MlsDeviceRef,
@@ -329,6 +336,22 @@ export class FakeDeliveryService {
         if (!g) return fail("no_group", "This conversation has no group yet.");
         g.info = { epoch: g.epoch, data: groupInfo.slice() };
         return { ok: true };
+      },
+
+      replaceGroup: async ({ conversationId, deviceId, oldGroupId, groupId }) => {
+        await tick();
+        if (!member(conversationId)) return fail("not_found", "No such conversation.");
+        if (!this.isDevice(me, deviceId)) return fail("unknown_device", "Publish KeyPackages from this device first.");
+        const g = this.groups.get(conversationId);
+        if (!g || g.groupId !== oldGroupId) return fail("stale_group", "That isn't this conversation's group anymore.");
+        const listed = new Set(this.devicesOf(this.conversations.get(conversationId)!).map((d) => d.deviceId));
+        if (!g.info || mlsGroupInfoDeviceIds(g.info.data, this.scope).some((id) => listed.has(id))) {
+          return fail("not_abandoned", "Somebody in this group can still add devices.");
+        }
+        const fresh: GroupRow = { conversationId, groupId, epoch: 0, headSeq: 0, log: [] };
+        this.groups.set(conversationId, fresh);
+        this.welcomes = this.welcomes.filter((w) => w.groupId !== oldGroupId);
+        return { ok: true, group: this.groupView(fresh) };
       },
 
       getGroupInfo: async ({ conversationId, deviceId }) => {

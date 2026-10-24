@@ -133,6 +133,14 @@ export interface MlsTransport {
   /** The group's GroupInfo for its current epoch, so a device of a member can join by itself (GRYT-1859). */
   putGroupInfo?(req: { conversationId: string; deviceId: string; groupInfo: Uint8Array }): Promise<MlsReply<object>>;
   getGroupInfo?(req: { conversationId: string; deviceId: string }): Promise<MlsReply<{ epoch: number; groupInfo: Uint8Array }>>;
+
+  /** A fresh group in place of one nobody is left in to add anyone (GRYT-1862). The server checks that. */
+  replaceGroup?(req: {
+    conversationId: string;
+    deviceId: string;
+    oldGroupId: string;
+    groupId: string;
+  }): Promise<MlsReply<{ group: MlsGroupView }>>;
 }
 
 /** `server:info.mls`. Absent means the server can't do MLS. */

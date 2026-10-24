@@ -931,6 +931,38 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(tablet.texts().includes("ola: welcome back"));
   });
 
+  it("starts the DM over when nobody left in it can add anyone (GRYT-1862)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+
+    // Ola's phone goes, and Kari's takes its leaf out. Then Kari's phone goes quiet for good too.
+    ola.socket.online = false;
+    fake.expire("ola", ola.store.device!.deviceId);
+    // Ola has no device left to add, so this fails, after the leaf is gone.
+    await assert.rejects(phone.driver.send(dm, "ola", text("er du der?")), /None of their devices/);
+    await fake.settle();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(fake.groups.get(dm)!.info?.epoch, fake.groups.get(dm)!.epoch, "the GroupInfo after that commit is up");
+    phone.socket.online = false;
+    fake.expire("kari", phone.store.device!.deviceId);
+    const before = fake.groups.get(dm)!.groupId;
+
+    const tablet = device(fake, "ola", "tablet");
+    const laptop = device(fake, "kari", "laptop");
+    await tablet.driver.start();
+    await laptop.driver.start();
+    await tablet.driver.send(dm, "kari", text("ny start"));
+    await fake.settle();
+    assert.notEqual(fake.groups.get(dm)!.groupId, before, "a new group took the old one's place");
+    assert.ok(laptop.texts().includes("ola: ny start"));
+  });
+
   it("asks to be added when there's no GroupInfo to join from", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "ola");
