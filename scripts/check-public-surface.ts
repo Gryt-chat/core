@@ -67,6 +67,8 @@ const REQUIRED = [
   "MlsDriverError",
   "mlsPinsFromPeerPins",
   "decodeMlsDmContent",
+  "historyBatches",
+  "MAX_HISTORY_BATCH_BYTES",
   "encodeMlsDmContent",
   "MLS_DM_CONTENT_VERSION",
   "readMlsDmContent",

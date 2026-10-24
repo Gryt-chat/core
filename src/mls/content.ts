@@ -3,7 +3,25 @@ import { base64UrlDecode, type SealedAttachmentKey } from "@gryt/crypto";
 /* What goes inside an MLS application message in a DM, as the phone wrote it first (GRYT-1521).
    Everything decrypted is still a peer's input, so the reader checks every field. */
 
+/** One message from the sender's own record of the DM, for the other person's new device (GRYT-1875). */
+export interface MlsHistoryEntry {
+  id: string;
+  /** Server user id of whoever wrote it, as the sender's record has it. */
+  senderId: string;
+  /** Milliseconds since the epoch. */
+  sentAt: number;
+  text: string;
+  replyTo?: string;
+  attachments?: Record<string, SealedAttachmentKey>;
+}
+
 export type MlsDmContent =
+  | {
+      type: "history";
+      /** For the batch itself, so a repeat is the same message. */
+      id: string;
+      entries: MlsHistoryEntry[];
+    }
   | {
       type: "message";
       /** Made by the sender, a UUID. Edits and deletes name it. */
@@ -44,6 +62,9 @@ const isId = (v: unknown): v is string => typeof v === "string" && v.length > 0 
 const isText = (v: unknown): v is string => typeof v === "string" && v.length <= MAX_TEXT;
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isLabel = (v: unknown): v is string => typeof v === "string" && v.length <= MAX_LABEL;
+const MAX_HISTORY_ENTRIES = 200;
+/** Under what one `mls:send` takes once sealed and padded. */
+export const MAX_HISTORY_BATCH_BYTES = 48 * 1024;
 
 /** One emoji's worth of emoji characters, so a peer can't put a sentence on a message as a reaction. */
 function isReactionEmoji(v: unknown): v is string {
@@ -100,7 +121,9 @@ function readAttachments(v: unknown): Record<string, SealedAttachmentKey> | null
 /** The same bytes the phone writes: `v` first, then the content's fields in this order. */
 export function encodeMlsDmContent(content: MlsDmContent): Uint8Array {
   let body: Record<string, unknown>;
-  if (content.type === "message") {
+  if (content.type === "history") {
+    body = { type: content.type, id: content.id, entries: content.entries.map(historyBody) };
+  } else if (content.type === "message") {
     body = { type: content.type, id: content.id, text: content.text };
     if (content.replyTo !== undefined) body.replyTo = content.replyTo;
     if (content.attachments && Object.keys(content.attachments).length > 0) body.attachments = content.attachments;
@@ -114,6 +137,46 @@ export function encodeMlsDmContent(content: MlsDmContent): Uint8Array {
   const bytes = new TextEncoder().encode(JSON.stringify({ v: MLS_DM_CONTENT_VERSION, ...body }));
   if (!decodeMlsDmContent(bytes)) throw new Error("That content wouldn't read back, so it isn't sent.");
   return bytes;
+}
+
+function historyBody(e: MlsHistoryEntry): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: e.id, senderId: e.senderId, sentAt: e.sentAt, text: e.text };
+  if (e.replyTo !== undefined) out.replyTo = e.replyTo;
+  if (e.attachments && Object.keys(e.attachments).length > 0) out.attachments = e.attachments;
+  return out;
+}
+
+/** History as batches small enough to send, oldest first. One entry too big to send on its own is left out. */
+export function historyBatches(entries: MlsHistoryEntry[], newId: () => string): Extract<MlsDmContent, { type: "history" }>[] {
+  const size = (batch: MlsHistoryEntry[]) =>
+    new TextEncoder().encode(JSON.stringify({ v: MLS_DM_CONTENT_VERSION, type: "history", id: "x".repeat(MAX_ID), entries: batch.map(historyBody) })).length;
+  const out: Extract<MlsDmContent, { type: "history" }>[] = [];
+  let batch: MlsHistoryEntry[] = [];
+  for (const e of [...entries].sort((a, b) => a.sentAt - b.sentAt)) {
+    if (!readHistoryEntry(historyBody(e)) || size([e]) > MAX_HISTORY_BATCH_BYTES) continue;
+    if (batch.length === MAX_HISTORY_ENTRIES || size([...batch, e]) > MAX_HISTORY_BATCH_BYTES) {
+      out.push({ type: "history", id: newId(), entries: batch });
+      batch = [];
+    }
+    batch.push(e);
+  }
+  if (batch.length) out.push({ type: "history", id: newId(), entries: batch });
+  return out;
+}
+
+function readHistoryEntry(v: unknown): MlsHistoryEntry | null {
+  if (!isObject(v) || !isId(v.id) || !isId(v.senderId) || !isText(v.text) || !isCount(v.sentAt)) return null;
+  const out: MlsHistoryEntry = { id: v.id, senderId: v.senderId, sentAt: v.sentAt, text: v.text };
+  if (v.replyTo !== undefined) {
+    if (!isId(v.replyTo)) return null;
+    out.replyTo = v.replyTo;
+  }
+  if (v.attachments !== undefined) {
+    const attachments = readAttachments(v.attachments);
+    if (!attachments) return null;
+    out.attachments = attachments;
+  }
+  return out;
 }
 
 /** Null for anything this version can't read: a newer version, a new type, or junk. */
@@ -130,7 +193,7 @@ export function readMlsDmContent(bytes: Uint8Array): MlsDmContent | "newer" | nu
   return fromRaw(raw) ?? (isNewer(raw) ? "newer" : null);
 }
 
-const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction"]);
+const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction", "history"]);
 const TYPE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 
 /** A later version, or a type this one doesn't know that names its message the way ours do. */
@@ -152,6 +215,11 @@ function fromRaw(raw: unknown): MlsDmContent | null {
   if (!isObject(raw) || raw.v !== MLS_DM_CONTENT_VERSION || !isId(raw.id)) return null;
   const { type, id, text } = raw;
 
+  if (type === "history") {
+    if (!Array.isArray(raw.entries) || raw.entries.length === 0 || raw.entries.length > MAX_HISTORY_ENTRIES) return null;
+    const entries = raw.entries.map(readHistoryEntry);
+    return entries.every((e): e is MlsHistoryEntry => e !== null) ? { type, id, entries } : null;
+  }
   if (type === "message" && isText(text)) {
     const out: Extract<MlsDmContent, { type: "message" }> = { type, id, text };
     if (raw.replyTo !== undefined) {
