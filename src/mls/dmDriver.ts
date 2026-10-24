@@ -42,7 +42,7 @@ import type {
   MlsTransport,
   MlsWelcomeDelivery,
 } from "./interfaces.js";
-import type { MlsAddOwnDeviceOptions, MlsGroupPosition, MlsOwnDeviceAdd } from "./interfaces.js";
+import type { MlsAddOwnDeviceOptions, MlsDmDiagnostics, MlsGroupPosition, MlsOwnDeviceAdd } from "./interfaces.js";
 
 /** Devices per person per server. Must match the server's MLS_MAX_DEVICES, or extra devices are left out quietly. */
 const MLS_MAX_DEVICES_PER_PERSON = 100;
@@ -670,6 +670,37 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     });
   }
 
+  async function diagnose(conversationId: string): Promise<MlsDmDiagnostics> {
+    const d = device ?? (await store.loadDevice());
+    const rec = await store.loadGroup(conversationId);
+    let inGroup: MlsDmDiagnostics["inGroup"] = null;
+    let epoch = -1;
+    if (rec) {
+      try {
+        const state = decodeMlsGroupState(rec.state, trustFor(conversationId));
+        epoch = epochOf(state);
+        inGroup = mlsGroupMembers(state, scope).map((m) => ({
+          deviceId: m.certificate.deviceId,
+          name: m.certificate.deviceName,
+          thisDevice: m.certificate.deviceId === d?.deviceId,
+        }));
+      } catch {
+        inGroup = null;
+      }
+    }
+    const listed = await transport.listDevices({ conversationId }).catch(() => null);
+    return {
+      deviceId: d?.deviceId ?? null,
+      registered,
+      group: rec ? { groupId: rec.groupId, epoch, cursor: rec.cursor, joinedEpoch: rec.joinedEpoch } : null,
+      inGroup,
+      listed: listed?.ok ? listed.devices : null,
+      left: left.has(conversationId),
+      unjoinable: unjoinable.has(conversationId),
+      askedAt: asked.get(conversationId) ?? null,
+    };
+  }
+
   /* Only a member can add a device, so one that's out asks the members' apps to. An old
      server doesn't answer, which is why nothing waits on it. */
   async function askToBeAdded(conversationId: string, force = false): Promise<void> {
@@ -1105,6 +1136,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     handleAddRequest,
     requestAdd: (conversationId) => askToBeAdded(conversationId, true),
     ownDevices,
+    diagnose,
     async removeOwnDevice(deviceId: string) {
       const r = await transport.removeDevice({ deviceId });
       if (!r.ok) throw refused("Removing the device", r);

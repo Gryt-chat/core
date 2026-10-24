@@ -319,6 +319,22 @@ export interface MlsDmDriverOptions {
   welcomeWaitMs?: number;
 }
 
+/** One DM as this device sees it, for support (GRYT-1864). Ids and counts, never message content. */
+export interface MlsDmDiagnostics {
+  /** Null when this device has no MLS record here yet. */
+  deviceId: string | null;
+  registered: boolean;
+  group: { groupId: string; epoch: number; cursor: number; joinedEpoch: number } | null;
+  /** The devices in this device's copy of the group, named by their certificates. */
+  inGroup: { deviceId: string; name: string | null; thisDevice: boolean }[] | null;
+  /** What the server lists for the people in this DM, or null when it didn't answer. */
+  listed: MlsListedDevice[] | null;
+  left: boolean;
+  unjoinable: boolean;
+  /** When this device last asked to be added, in ms. */
+  askedAt: number | null;
+}
+
 /** One per server. Calls for one conversation run one at a time, in order. */
 export interface MlsDmDriver {
   /** On connect: register, top up KeyPackages, take waiting Welcomes, catch up every group. */
@@ -343,6 +359,8 @@ export interface MlsDmDriver {
   requestAdd(conversationId: string): Promise<void>;
   /** Oldest first, as the server lists them. */
   ownDevices(): Promise<MlsOwnDevice[]>;
+  /** See `MlsDmDiagnostics`. Creates nothing, so looking can't change what it shows. */
+  diagnose(conversationId: string): Promise<MlsDmDiagnostics>;
   /** Your own devices only. Every group you share drops it on the next pass. */
   removeOwnDevice(deviceId: string): Promise<void>;
   /** Pairing: each group's cursor now, which is what the history snapshot covers. */

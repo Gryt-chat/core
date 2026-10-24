@@ -3,7 +3,14 @@ import { describe, it } from "node:test";
 
 import { sealAttachment } from "@gryt/crypto";
 
-import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent, readMlsDmContent } from "./content.ts";
+import {
+  decodeMlsDmContent,
+  encodeMlsDmContent,
+  historyBatches,
+  MAX_HISTORY_BATCH_BYTES,
+  type MlsDmContent,
+  readMlsDmContent,
+} from "./content.ts";
 
 const raw = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
 const meta = () => sealAttachment({ bytes: new Uint8Array([1, 2, 3]), conversationId: "dm:a:b", name: "a.png", mime: "image/png", width: 2, height: 1 }).meta;
@@ -179,5 +186,29 @@ describe("MLS DM content", () => {
   it("won't write what it wouldn't read", () => {
     assert.throws(() => encodeMlsDmContent({ type: "message", id: "", text: "x" }));
     assert.throws(() => encodeMlsDmContent({ type: "message", id: "a", text: "x", replyTo: "r".repeat(65) }));
+  });
+});
+
+describe("history from the other person (GRYT-1875)", () => {
+  const entry = (n: number, text = `melding ${n}`) => ({ id: `m${n}`, senderId: n % 2 ? "kari" : "ola", sentAt: 1_000 + n, text });
+
+  it("reads back what it writes, and refuses a bad entry", () => {
+    const content = { type: "history" as const, id: "h1", entries: [entry(1), { ...entry(2), replyTo: "m1" }] };
+    assert.deepEqual(decodeMlsDmContent(encodeMlsDmContent(content)), content);
+    const bad = new TextEncoder().encode(JSON.stringify({ v: 1, type: "history", id: "h2", entries: [{ ...entry(3), sentAt: -1 }] }));
+    assert.equal(decodeMlsDmContent(bad), null);
+    const empty = new TextEncoder().encode(JSON.stringify({ v: 1, type: "history", id: "h3", entries: [] }));
+    assert.equal(decodeMlsDmContent(empty), null);
+  });
+
+  it("splits into batches that each fit one send, oldest first", () => {
+    let n = 0;
+    const entries = Array.from({ length: 30 }, (_, i) => entry(30 - i, "x".repeat(4_000)));
+    const batches = historyBatches(entries, () => `h${n++}`);
+    assert.ok(batches.length > 1);
+    for (const b of batches) assert.ok(encodeMlsDmContent(b).length <= MAX_HISTORY_BATCH_BYTES);
+    const ids = batches.flatMap((b) => b.entries.map((e) => e.id));
+    assert.equal(ids.length, 30);
+    assert.equal(ids[0], "m1", "oldest first");
   });
 });

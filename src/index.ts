@@ -99,8 +99,11 @@ export { mlsPinsFromPeerPins } from "./mls/pins.js";
 export {
   decodeMlsDmContent,
   encodeMlsDmContent,
+  historyBatches,
+  MAX_HISTORY_BATCH_BYTES,
   MLS_DM_CONTENT_VERSION,
   type MlsDmContent,
+  type MlsHistoryEntry,
   readMlsDmContent,
 } from "./mls/content.js";
 export { applyMlsReaction, mlsReactionAction, type MlsReaction } from "./mls/reactions.js";
@@ -120,6 +123,7 @@ export type {
   MlsKeyPackageRecord,
   MlsListedDevice,
   MlsLogEntry,
+  MlsDmDiagnostics,
   MlsOwnDevice,
   MlsOwnDeviceAdd,
   MlsPins,
