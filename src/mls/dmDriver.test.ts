@@ -906,6 +906,31 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(ola.texts().includes("kari: tilbake"));
   });
 
+  it("lets a device back in after the server expired it, once it registers again (GRYT-1872)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const tablet = device(fake, "kari", "tablet");
+    const ola = device(fake, "ola", "phone");
+    for (const d of [phone, tablet, ola]) await d.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+    assert.ok(tablet.texts().includes("kari: hei"));
+
+    tablet.socket.online = false;
+    fake.expire("kari", tablet.store.device!.deviceId);
+    await ola.driver.send(dm, "kari", text("tablet is out"));
+    await fake.settle();
+
+    tablet.socket.online = true;
+    await tablet.driver.start();
+    await fake.settle();
+    assert.ok(tablet.lost.some((l) => l.reason === "removed"));
+    await ola.driver.send(dm, "kari", text("welcome back"));
+    await fake.settle();
+    assert.ok(tablet.texts().includes("ola: welcome back"));
+  });
+
   it("asks to be added when there's no GroupInfo to join from", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "ola");
