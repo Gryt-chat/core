@@ -589,7 +589,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         const list = welcomeWaiters.get(conversationId) ?? [];
         welcomeWaiters.set(conversationId, list.filter((w) => w !== done));
         reject(new MlsDriverError("waiting_for_welcome", "The group exists and this device hasn't been added yet."));
-      }, WELCOME_WAIT_MS);
+      }, options.welcomeWaitMs ?? WELCOME_WAIT_MS);
       welcomeWaiters.set(conversationId, [...(welcomeWaiters.get(conversationId) ?? []), done]);
     });
   }

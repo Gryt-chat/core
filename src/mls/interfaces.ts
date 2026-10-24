@@ -307,6 +307,8 @@ export interface MlsDmDriverOptions {
   newDevice(): MlsDeviceRecord | Promise<MlsDeviceRecord>;
   /** How long a send waits for the server before it fails with `offline`. Five minutes. */
   sendGiveUpMs?: number;
+  /** How long a send waits for this device to be added to a group that exists. Ten seconds. */
+  welcomeWaitMs?: number;
 }
 
 /** One per server. Calls for one conversation run one at a time, in order. */
