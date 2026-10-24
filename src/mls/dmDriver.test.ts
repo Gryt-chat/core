@@ -4,8 +4,10 @@ import { describe, it } from "node:test";
 import {
   asIdentityScope,
   createMlsDevice,
+  decodeMlsGroupState,
   derivePersonKeyPair,
   generateMlsKeyPackage,
+  mlsGroupMembers,
   openAttachment,
   sealAttachment,
   pinPeerKey,
@@ -849,6 +851,30 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     await ola.driver.send(dm, "kari", text("hei laptop"));
     await fake.settle();
     assert.deepEqual(laptop.texts(), ["ola: hei laptop"]);
+  });
+
+  it("takes back its own leaf when it lost the group but kept its device (GRYT-1862)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "ola");
+    const phone = device(fake, "kari", "phone");
+    const ola = device(fake, "ola", "phone");
+    await phone.driver.start();
+    await ola.driver.start();
+    await phone.driver.send(dm, "ola", text("hei"));
+    await fake.settle();
+
+    phone.socket.online = false;
+    const kept = new MemoryMlsStore();
+    kept.device = phone.store.device;
+    const again = device(fake, "kari", "phone", { store: kept });
+    await again.driver.start();
+    await again.driver.send(dm, "ola", text("tilbake"));
+    await fake.settle();
+    assert.ok(ola.texts().includes("kari: tilbake"));
+
+    const rec = ola.store.groups.get(dm)!;
+    const state = decodeMlsGroupState(rec.state, { scope: SCOPE, trustPersonKey: async () => true });
+    assert.equal(mlsGroupMembers(state, SCOPE).length, 2, "its old leaf went instead of staying beside the new one");
   });
 
   it("asks to be added when there's no GroupInfo to join from", async () => {
