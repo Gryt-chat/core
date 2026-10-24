@@ -140,6 +140,14 @@ export class FakeDeliveryService {
     return { conversationId: g.conversationId, groupId: g.groupId, epoch: g.epoch, headSeq: g.headSeq };
   }
 
+  /** What the server's retention sweep does to a device not seen for a while: gone, but not removed. */
+  expire(serverUserId: string, deviceId: string): void {
+    this.devices.set(serverUserId, (this.devices.get(serverUserId) ?? []).filter((d) => d !== deviceId));
+    this.keyPackages = this.keyPackages.filter((k) => !(k.serverUserId === serverUserId && k.deviceId === deviceId));
+    this.welcomes = this.welcomes.filter((w) => !(w.serverUserId === serverUserId && w.deviceId === deviceId));
+    this.push(this.peopleSharing(serverUserId), (d) => d.handleDevicesChanged({ serverUserId }));
+  }
+
   private transportFor(socket: Socket): MlsTransport {
     const me = socket.serverUserId;
     const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
