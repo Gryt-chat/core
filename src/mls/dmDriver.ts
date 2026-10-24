@@ -12,6 +12,7 @@ import {
   joinMlsGroupExternally,
   mlsGroupInfo,
   mlsGroupInfoForJoining,
+  mlsGroupInfoDeviceIds,
   mlsGroupMembers,
   mlsWelcomeRefs,
   processMlsMessage,
@@ -165,6 +166,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   const rawRequestAdd = raw.requestAdd?.bind(raw);
   const rawPutGroupInfo = raw.putGroupInfo?.bind(raw);
   const rawGetGroupInfo = raw.getGroupInfo?.bind(raw);
+  const rawReplaceGroup = raw.replaceGroup?.bind(raw);
   const transport: MlsTransport = {
     publishKeyPackages: stopOnRemoval((req) => raw.publishKeyPackages(req)),
     claimKeyPackages: stopOnRemoval((req) => raw.claimKeyPackages(req)),
@@ -179,6 +181,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     ...(rawRequestAdd ? { requestAdd: stopOnRemoval(rawRequestAdd) } : {}),
     ...(rawPutGroupInfo ? { putGroupInfo: stopOnRemoval(rawPutGroupInfo) } : {}),
     ...(rawGetGroupInfo ? { getGroupInfo: stopOnRemoval(rawGetGroupInfo) } : {}),
+    ...(rawReplaceGroup ? { replaceGroup: stopOnRemoval(rawReplaceGroup) } : {}),
   };
   const scope = asIdentityScope(options.scope);
   const trusts = new Map<string, MlsTrust>();
@@ -636,6 +639,37 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     });
   }
 
+  /* Every device in the group is gone, so nobody can add anyone and nobody can join by itself:
+     this device starts a new group in its place. Others who held the old one follow it (core#48). */
+  async function rebuild(conversationId: string): Promise<boolean> {
+    const replace = transport.replaceGroup;
+    if (!replace || !transport.getGroupInfo) return false;
+    const d = await ownDevice();
+    const got = await transport.getGroupInfo({ conversationId, deviceId: d.deviceId }).catch(() => null);
+    const listed = got?.ok ? await transport.listDevices({ conversationId }) : null;
+    const log = listed?.ok ? await transport.fetchLog({ conversationId, after: 0, limit: 1 }) : null;
+    if (!got?.ok || !listed?.ok || !log?.ok || !log.group) return false;
+    const inGroup = mlsGroupInfoDeviceIds(got.groupInfo, scope);
+    if (inGroup.some((id) => listed.devices.some((x) => x.deviceId === id))) return false;
+    const oldGroupId = log.group.groupId;
+    return run(conversationId, async () => {
+      if (await store.loadGroup(conversationId)) return true;
+      const state = await createMlsGroup(d, trustFor(conversationId));
+      const open: Open = {
+        rec: { conversationId, groupId: groupIdOf(state), state: encodeMlsGroupState(state), cursor: 0, joinedEpoch: 0 },
+        state,
+      };
+      await store.saveGroup(open.rec);
+      const r = await replace({ conversationId, deviceId: d.deviceId, oldGroupId, groupId: open.rec.groupId });
+      if (!r.ok) {
+        await store.deleteGroup(conversationId);
+        return false;
+      }
+      void publishGroupInfo(open);
+      return true;
+    });
+  }
+
   async function diagnose(conversationId: string): Promise<MlsDmDiagnostics> {
     const d = device ?? (await store.loadDevice());
     const rec = await store.loadGroup(conversationId);
@@ -697,6 +731,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       throw new MlsDriverError("peer_unverified", "This device was added, and a member's key isn't pinned here to join with.");
     }
     if (await joinByItself(conversationId)) return;
+    if (await rebuild(conversationId)) return;
     void askToBeAdded(conversationId).catch(() => undefined);
     await waitForWelcome(conversationId);
   }
