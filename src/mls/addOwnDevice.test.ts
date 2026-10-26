@@ -19,7 +19,7 @@ import { mlsPinsFromPeerPins } from "./pins.ts";
 
 const SCOPE = asIdentityScope("srv:pairing-test");
 const seedOf = (n: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * n + n) % 251);
-const SEEDS: Record<string, Uint8Array> = { kari: seedOf(3), ola: seedOf(5), mallory: seedOf(7), per: seedOf(11) };
+const SEEDS: Record<string, Uint8Array> = { kari: seedOf(3), mia: seedOf(5), mallory: seedOf(7), per: seedOf(11) };
 const text = (s: string) => new TextEncoder().encode(s);
 const read = (m: MlsDecryptedMessage) => new TextDecoder().decode(m.plaintext);
 
@@ -79,31 +79,31 @@ function device(fake: FakeDeliveryService, who: string, name: string, seed = SEE
   return { driver, store, messages, undecryptable, transport, socket, id, texts: () => messages.map(read) };
 }
 
-/* Kari's laptop in a DM with Ola, one message each way. `publishDesk` starts her new desktop. */
+/* Kari's laptop in a DM with Mia, one message each way. `publishDesk` starts her new desktop. */
 async function pairingSetup() {
   const fake = new FakeDeliveryService(SCOPE);
-  const dm = fake.dm("kari", "ola");
+  const dm = fake.dm("kari", "mia");
   const laptop = device(fake, "kari", "laptop");
-  const ola = device(fake, "ola", "phone");
+  const mia = device(fake, "mia", "phone");
   await laptop.driver.start();
-  await ola.driver.start();
-  await laptop.driver.send(dm, "ola", text("hei"));
+  await mia.driver.start();
+  await laptop.driver.send(dm, "mia", text("hei"));
   await fake.settle();
-  await ola.driver.send(dm, "kari", text("hei selv"));
+  await mia.driver.send(dm, "kari", text("hei selv"));
   await fake.settle();
   const desk = device(fake, "kari", "desk");
   const publishDesk = async () => {
     await desk.driver.start();
     await fake.settle();
   };
-  return { fake, dm, laptop, ola, desk, publishDesk };
+  return { fake, dm, laptop, mia, desk, publishDesk };
 }
 
 describe("adding your own new device (pairing)", () => {
   it("adds the new device to all three DMs, with progress for each", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const laptop = device(fake, "kari", "laptop");
-    const peers = ["ola", "mallory", "per"].map((who) => ({ who, dm: fake.dm("kari", who), d: device(fake, who, "phone") }));
+    const peers = ["mia", "mallory", "per"].map((who) => ({ who, dm: fake.dm("kari", who), d: device(fake, who, "phone") }));
     await laptop.driver.start();
     for (const p of peers) await p.d.driver.start();
     for (const p of peers) await laptop.driver.send(p.dm, p.who, text(`hei ${p.who}`));
@@ -126,7 +126,7 @@ describe("adding your own new device (pairing)", () => {
 
     for (const p of peers) await p.d.driver.send(p.dm, "kari", text(`from ${p.who}`));
     await fake.settle();
-    assert.deepEqual(desk.texts().sort(), ["from mallory", "from ola", "from per"]);
+    assert.deepEqual(desk.texts().sort(), ["from mallory", "from mia", "from per"]);
     assert.deepEqual(desk.undecryptable, []);
 
     const again = await laptop.driver.addOwnDevice(desk.id(), { order: results.map((r) => r.conversationId) });
@@ -135,21 +135,21 @@ describe("adding your own new device (pairing)", () => {
   });
 
   it("records exactly where the device went in, for the snapshot, the tail and the late ones", async () => {
-    const { fake, dm, laptop, ola, desk, publishDesk } = await pairingSetup();
+    const { fake, dm, laptop, mia, desk, publishDesk } = await pairingSetup();
     const [snap] = await laptop.driver.groupPositions();
     assert.deepEqual(snap, { conversationId: dm, groupId: fake.groups.get(dm)!.groupId, seq: fake.groups.get(dm)!.headSeq, epoch: 1 });
 
     // Two messages between the snapshot and the add: the tail.
-    await ola.driver.send(dm, "kari", text("tail 1"));
-    await ola.driver.send(dm, "kari", text("tail 2"));
+    await mia.driver.send(dm, "kari", text("tail 1"));
+    await mia.driver.send(dm, "kari", text("tail 2"));
     await fake.settle();
-    // Ola misses the desk's arrival, so her next send won't add it herself.
-    ola.socket.online = false;
+    // Mia misses the desk's arrival, so her next send won't add it herself.
+    mia.socket.online = false;
     await publishDesk();
 
-    // Ola encrypts one more in the old epoch; it reaches the server only after the add.
-    const late = gate(ola.transport, "send");
-    const lateSend = ola.driver.send(dm, "kari", text("late"));
+    // Mia encrypts one more in the old epoch; it reaches the server only after the add.
+    const late = gate(mia.transport, "send");
+    const lateSend = mia.driver.send(dm, "kari", text("late"));
     await late.atGate;
     const [result] = await laptop.driver.addOwnDevice(desk.id());
     late.release();
@@ -173,19 +173,19 @@ describe("adding your own new device (pairing)", () => {
   });
 
   it("catches up and adds again after a stale_epoch race", async () => {
-    const { fake, dm, laptop, ola, desk, publishDesk } = await pairingSetup();
-    const tablet = device(fake, "ola", "tablet");
+    const { fake, dm, laptop, mia, desk, publishDesk } = await pairingSetup();
+    const tablet = device(fake, "mia", "tablet");
     await tablet.driver.start();
     await fake.settle();
-    await ola.driver.send(dm, "kari", text("tablet in"));
+    await mia.driver.send(dm, "kari", text("tablet in"));
     await fake.settle();
     await publishDesk();
 
-    // Ola takes her tablet out while Kari's add is on its way.
+    // Mia takes her tablet out while Kari's add is on its way.
     const held = gate(laptop.transport, "commit");
     const adding = laptop.driver.addOwnDevice(desk.id());
     await held.atGate;
-    await ola.driver.removeOwnDevice(tablet.id());
+    await mia.driver.removeOwnDevice(tablet.id());
     const removal = fake.groups.get(dm)!.log.at(-1)!;
     held.release();
     const [result] = await adding;
@@ -195,34 +195,34 @@ describe("adding your own new device (pairing)", () => {
     assert.equal(fake.stats.staleEpoch, 1);
     assert.equal(result.outcome, "added");
     assert.deepEqual(result.add, { seq: removal.seq + 1, epoch: removal.epoch + 2 });
-    await ola.driver.send(dm, "kari", text("after"));
+    await mia.driver.send(dm, "kari", text("after"));
     await fake.settle();
     assert.deepEqual(desk.texts(), ["after"]);
   });
 
   it("takes a peer's commit as the add when it lands at the same moment", async () => {
-    const { fake, dm, laptop, ola, desk, publishDesk } = await pairingSetup();
+    const { fake, dm, laptop, mia, desk, publishDesk } = await pairingSetup();
     await publishDesk();
     const commitsBefore = fake.stats.commits;
 
     const held = gate(laptop.transport, "commit");
     const adding = laptop.driver.addOwnDevice(desk.id());
     await held.atGate;
-    // Ola's next send adds every device it finds, the desk included.
-    await ola.driver.send(dm, "kari", text("hei desk"));
-    const olaCommit = fake.groups.get(dm)!.log.findLast((e) => e.kind === "commit")!;
+    // Mia's next send adds every device it finds, the desk included.
+    await mia.driver.send(dm, "kari", text("hei desk"));
+    const miaCommit = fake.groups.get(dm)!.log.findLast((e) => e.kind === "commit")!;
     held.release();
     const [result] = await adding;
     await fake.settle();
 
-    assert.equal(olaCommit.senderServerUserId, "ola");
+    assert.equal(miaCommit.senderServerUserId, "mia");
     assert.equal(fake.stats.staleEpoch, 1);
     assert.equal(fake.stats.commits - commitsBefore, 1, "the desk went in once");
     assert.deepEqual(result, {
       conversationId: dm,
       groupId: fake.groups.get(dm)!.groupId,
       outcome: "added_by_other",
-      add: { seq: olaCommit.seq, epoch: olaCommit.epoch + 1 },
+      add: { seq: miaCommit.seq, epoch: miaCommit.epoch + 1 },
     });
     assert.deepEqual(desk.texts(), ["hei desk"]);
   });

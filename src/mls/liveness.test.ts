@@ -22,9 +22,9 @@ import { mlsPinsFromPeerPins } from "./pins.ts";
 
 const SCOPE = asIdentityScope("srv:liveness");
 const CAPABILITY = { version: 1, ciphersuites: [1], retentionDays: 30 };
-const PEOPLE = ["kari", "ola"] as const;
+const PEOPLE = ["kari", "mia"] as const;
 const seedOf = (n: number) => Uint8Array.from({ length: 32 }, (_, i) => (i * n + n) % 251);
-const SEEDS = { kari: seedOf(3), ola: seedOf(5) };
+const SEEDS = { kari: seedOf(3), mia: seedOf(5) };
 const RUNS = Number(process.env.MLS_LIVENESS_RUNS ?? 25);
 const STEPS = 14;
 
@@ -44,7 +44,7 @@ interface Device {
 }
 
 function newDevice(fake: FakeDeliveryService, who: Device["who"], name: string): Device {
-  const other = who === "kari" ? "ola" : "kari";
+  const other = who === "kari" ? "mia" : "kari";
   let pins: Record<string, PeerPin> = {};
   const pinStore = { read: () => structuredClone(pins), write: (p: Record<string, PeerPin>) => void (pins = structuredClone(p)) };
   pinPeerKey(pinStore, SCOPE, other, { dmPublicKey: new Uint8Array(32), identityThumbprint: `id-${other}` } as VerifiedDmKeyBinding);
@@ -80,14 +80,14 @@ function newDevice(fake: FakeDeliveryService, who: Device["who"], name: string):
   return { who, name, driver, socket, store, received, gone: false };
 }
 
-const peerOf = (who: Device["who"]) => (who === "kari" ? "ola" : "kari");
+const peerOf = (who: Device["who"]) => (who === "kari" ? "mia" : "kari");
 const text = (s: string) => new TextEncoder().encode(s);
 
 async function run(seed: number): Promise<{ log: string[]; stuck: string[] }> {
   const random = rng(seed);
   const pick = <T>(xs: T[]) => xs[Math.floor(random() * xs.length)];
   const fake = new FakeDeliveryService(SCOPE);
-  const dm = fake.dm("kari", "ola");
+  const dm = fake.dm("kari", "mia");
   const log: string[] = [];
   let n = 0;
   const devices: Device[] = [];
@@ -101,7 +101,7 @@ async function run(seed: number): Promise<{ log: string[]; stuck: string[] }> {
     log.push(`${d.name} registers`);
   };
   await add("kari");
-  await add("ola");
+  await add("mia");
 
   for (let step = 0; step < STEPS; step++) {
     const r = random();
