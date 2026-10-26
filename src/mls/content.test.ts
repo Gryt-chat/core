@@ -190,7 +190,7 @@ describe("MLS DM content", () => {
 });
 
 describe("history from the other person (GRYT-1875)", () => {
-  const entry = (n: number, text = `melding ${n}`) => ({ id: `m${n}`, senderId: n % 2 ? "kari" : "ola", sentAt: 1_000 + n, text });
+  const entry = (n: number, text = `melding ${n}`) => ({ id: `m${n}`, senderId: n % 2 ? "kari" : "mia", sentAt: 1_000 + n, text });
 
   it("reads back what it writes, and refuses a bad entry", () => {
     const content = { type: "history" as const, id: "h1", entries: [entry(1), { ...entry(2), replyTo: "m1" }] };
