@@ -120,6 +120,15 @@ export {
   readDiscordDm,
 } from "./import/discordPackage.js";
 export { inflateRaw, openZipBytes } from "./import/unzip.js";
+export {
+  type ImportControl,
+  type ImportDeps,
+  type ImportFile,
+  type ImportFileStore,
+  importId,
+  type ImportProgress,
+  runDiscordImport,
+} from "./import/discordImportJob.js";
 export type {
   DmSealingMode,
   MlsAddOwnDeviceOptions,
