@@ -119,6 +119,7 @@ export {
   type PackageFiles,
   readDiscordDm,
 } from "./import/discordPackage.js";
+export { inflateRaw, openZipBytes } from "./import/unzip.js";
 export type {
   DmSealingMode,
   MlsAddOwnDeviceOptions,

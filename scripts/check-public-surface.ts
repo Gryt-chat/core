@@ -81,6 +81,8 @@ const REQUIRED = [
   "linksExpireAt",
   "listDiscordDms",
   "readDiscordDm",
+  "inflateRaw",
+  "openZipBytes",
   // pairing
   "createApproverPairing",
   "createNewDevicePairing",
