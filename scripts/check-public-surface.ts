@@ -76,6 +76,11 @@ const REQUIRED = [
   "readMlsDmContent",
   "applyMlsReaction",
   "mlsReactionAction",
+  // import
+  "isDiscordPackage",
+  "linksExpireAt",
+  "listDiscordDms",
+  "readDiscordDm",
   // pairing
   "createApproverPairing",
   "createNewDevicePairing",
@@ -111,6 +116,9 @@ const REQUIRED_TYPES = [
   "MlsTransport",
   "MlsDmContent",
   "MlsReaction",
+  "DiscordPackageDm",
+  "DiscordPackageMessage",
+  "PackageFiles",
   "ApproverPairing",
   "ApproverState",
   "NewDevicePairing",
