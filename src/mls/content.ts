@@ -15,7 +15,22 @@ export interface MlsHistoryEntry {
   attachments?: Record<string, SealedAttachmentKey>;
 }
 
+/** One message from the sender's own Discord data. Who wrote it is never in here: the reader takes the MLS sender. */
+export interface MlsImportEntry {
+  id: string;
+  /** Milliseconds since the epoch, Discord's time for it. */
+  sentAt: number;
+  text: string;
+  attachments?: Record<string, SealedAttachmentKey>;
+}
+
 export type MlsDmContent =
+  | {
+      type: "import";
+      id: string;
+      source: "discord";
+      entries: MlsImportEntry[];
+    }
   | {
       type: "history";
       /** For the batch itself, so a repeat is the same message. */
@@ -123,6 +138,8 @@ export function encodeMlsDmContent(content: MlsDmContent): Uint8Array {
   let body: Record<string, unknown>;
   if (content.type === "history") {
     body = { type: content.type, id: content.id, entries: content.entries.map(historyBody) };
+  } else if (content.type === "import") {
+    body = { type: content.type, id: content.id, source: content.source, entries: content.entries.map(importBody) };
   } else if (content.type === "message") {
     body = { type: content.type, id: content.id, text: content.text };
     if (content.replyTo !== undefined) body.replyTo = content.replyTo;
@@ -146,22 +163,60 @@ function historyBody(e: MlsHistoryEntry): Record<string, unknown> {
   return out;
 }
 
-/** History as batches small enough to send, oldest first. One entry too big to send on its own is left out. */
-export function historyBatches(entries: MlsHistoryEntry[], newId: () => string): Extract<MlsDmContent, { type: "history" }>[] {
-  const size = (batch: MlsHistoryEntry[]) =>
-    new TextEncoder().encode(JSON.stringify({ v: MLS_DM_CONTENT_VERSION, type: "history", id: "x".repeat(MAX_ID), entries: batch.map(historyBody) })).length;
-  const out: Extract<MlsDmContent, { type: "history" }>[] = [];
-  let batch: MlsHistoryEntry[] = [];
+function importBody(e: MlsImportEntry): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: e.id, sentAt: e.sentAt, text: e.text };
+  if (e.attachments && Object.keys(e.attachments).length > 0) out.attachments = e.attachments;
+  return out;
+}
+
+function sizedBatches<E extends { sentAt: number }>(
+  entries: E[],
+  body: (e: E) => Record<string, unknown>,
+  readable: (raw: Record<string, unknown>) => boolean,
+  head: Record<string, unknown>,
+): E[][] {
+  const size = (batch: E[]) =>
+    new TextEncoder().encode(JSON.stringify({ v: MLS_DM_CONTENT_VERSION, ...head, id: "x".repeat(MAX_ID), entries: batch.map(body) })).length;
+  const out: E[][] = [];
+  let batch: E[] = [];
   for (const e of [...entries].sort((a, b) => a.sentAt - b.sentAt)) {
-    if (!readHistoryEntry(historyBody(e)) || size([e]) > MAX_HISTORY_BATCH_BYTES) continue;
+    if (!readable(body(e)) || size([e]) > MAX_HISTORY_BATCH_BYTES) continue;
     if (batch.length === MAX_HISTORY_ENTRIES || size([...batch, e]) > MAX_HISTORY_BATCH_BYTES) {
-      out.push({ type: "history", id: newId(), entries: batch });
+      out.push(batch);
       batch = [];
     }
     batch.push(e);
   }
-  if (batch.length) out.push({ type: "history", id: newId(), entries: batch });
+  if (batch.length) out.push(batch);
   return out;
+}
+
+/** History as batches small enough to send, oldest first. One entry too big to send on its own is left out. */
+export function historyBatches(entries: MlsHistoryEntry[], newId: () => string): Extract<MlsDmContent, { type: "history" }>[] {
+  return sizedBatches(entries, historyBody, (raw) => readHistoryEntry(raw) !== null, { type: "history" })
+    .map((batch) => ({ type: "history", id: newId(), entries: batch }));
+}
+
+/** An import as batches small enough to send, oldest first, the same way `historyBatches` splits. */
+export function importBatches(entries: MlsImportEntry[], newId: () => string): Extract<MlsDmContent, { type: "import" }>[] {
+  return sizedBatches(entries, importBody, (raw) => readImportEntry(raw) !== null, { type: "import", source: "discord" })
+    .map((batch) => ({ type: "import", id: newId(), source: "discord", entries: batch }));
+}
+
+/** Discord's own epoch, 2015-01-01. Nothing from Discord is older. */
+const DISCORD_EPOCH = 1_420_070_400_000;
+
+/**
+ * An import's entries as messages by `senderId`, the MLS sender, whatever the batch says.
+ * Dated before Discord existed or after the server got it (`at`) is dropped.
+ */
+export function acceptImport(
+  content: Extract<MlsDmContent, { type: "import" }>,
+  { senderId, at }: { senderId: string; at: number },
+): MlsHistoryEntry[] {
+  return content.entries
+    .filter((e) => e.sentAt >= DISCORD_EPOCH && e.sentAt <= at)
+    .map((e) => (e.attachments ? { ...e, senderId } : { id: e.id, senderId, sentAt: e.sentAt, text: e.text }));
 }
 
 function readHistoryEntry(v: unknown): MlsHistoryEntry | null {
@@ -171,6 +226,17 @@ function readHistoryEntry(v: unknown): MlsHistoryEntry | null {
     if (!isId(v.replyTo)) return null;
     out.replyTo = v.replyTo;
   }
+  if (v.attachments !== undefined) {
+    const attachments = readAttachments(v.attachments);
+    if (!attachments) return null;
+    out.attachments = attachments;
+  }
+  return out;
+}
+
+function readImportEntry(v: unknown): MlsImportEntry | null {
+  if (!isObject(v) || !isId(v.id) || !isText(v.text) || !isCount(v.sentAt)) return null;
+  const out: MlsImportEntry = { id: v.id, sentAt: v.sentAt, text: v.text };
   if (v.attachments !== undefined) {
     const attachments = readAttachments(v.attachments);
     if (!attachments) return null;
@@ -193,7 +259,7 @@ export function readMlsDmContent(bytes: Uint8Array): MlsDmContent | "newer" | nu
   return fromRaw(raw) ?? (isNewer(raw) ? "newer" : null);
 }
 
-const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction", "history"]);
+const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction", "history", "import"]);
 const TYPE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 
 /** A later version, or a type this one doesn't know that names its message the way ours do. */
@@ -219,6 +285,11 @@ function fromRaw(raw: unknown): MlsDmContent | null {
     if (!Array.isArray(raw.entries) || raw.entries.length === 0 || raw.entries.length > MAX_HISTORY_ENTRIES) return null;
     const entries = raw.entries.map(readHistoryEntry);
     return entries.every((e): e is MlsHistoryEntry => e !== null) ? { type, id, entries } : null;
+  }
+  if (type === "import") {
+    if (raw.source !== "discord" || !Array.isArray(raw.entries) || raw.entries.length === 0 || raw.entries.length > MAX_HISTORY_ENTRIES) return null;
+    const entries = raw.entries.map(readImportEntry);
+    return entries.every((e): e is MlsImportEntry => e !== null) ? { type, id, source: raw.source, entries } : null;
   }
   if (type === "message" && isText(text)) {
     const out: Extract<MlsDmContent, { type: "message" }> = { type, id, text };
