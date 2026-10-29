@@ -1,7 +1,7 @@
 /* A zip reader with its own inflate (RFC 1951), for Hermes, which has no DecompressionStream.
    Read bit by bit: slow next to zlib, and fine for a package of JSON. No Zip64, no encryption. */
 
-import type { PackageFiles } from "./discordPackage.ts";
+import type { PackageFiles } from "./discordPackage.js";
 
 class Bits {
   pos = 0;
