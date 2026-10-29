@@ -40,6 +40,7 @@ export default tseslint.config(
   // unknown: stored and parsed data arrives unchecked and is validated there.
   {
     files: [
+      "src/import/discordPackage.ts",
       "src/mls/content.ts",
       "src/pairing/channel.ts",
       "src/pairing/newDevice.ts",

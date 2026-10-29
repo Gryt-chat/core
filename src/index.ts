@@ -110,6 +110,15 @@ export {
   readMlsDmContent,
 } from "./mls/content.js";
 export { applyMlsReaction, mlsReactionAction, type MlsReaction } from "./mls/reactions.js";
+export {
+  type DiscordPackageDm,
+  type DiscordPackageMessage,
+  isDiscordPackage,
+  linksExpireAt,
+  listDiscordDms,
+  type PackageFiles,
+  readDiscordDm,
+} from "./import/discordPackage.js";
 export type {
   DmSealingMode,
   MlsAddOwnDeviceOptions,
