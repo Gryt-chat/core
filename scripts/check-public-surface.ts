@@ -68,6 +68,8 @@ const REQUIRED = [
   "mlsPinsFromPeerPins",
   "decodeMlsDmContent",
   "historyBatches",
+  "importBatches",
+  "acceptImport",
   "MAX_HISTORY_BATCH_BYTES",
   "encodeMlsDmContent",
   "MLS_DM_CONTENT_VERSION",

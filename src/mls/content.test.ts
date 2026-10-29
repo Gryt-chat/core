@@ -4,9 +4,11 @@ import { describe, it } from "node:test";
 import { sealAttachment } from "@gryt/crypto";
 
 import {
+  acceptImport,
   decodeMlsDmContent,
   encodeMlsDmContent,
   historyBatches,
+  importBatches,
   MAX_HISTORY_BATCH_BYTES,
   type MlsDmContent,
   readMlsDmContent,
@@ -210,5 +212,52 @@ describe("history from the other person (GRYT-1875)", () => {
     const ids = batches.flatMap((b) => b.entries.map((e) => e.id));
     assert.equal(ids.length, 30);
     assert.equal(ids[0], "m1", "oldest first");
+  });
+});
+
+describe("an import from your own Discord data (GRYT-1965)", () => {
+  const t = Date.UTC(2023, 3, 12, 21, 14);
+  const entry = (n: number, text = `melding ${n}`) => ({ id: `d${n}`, sentAt: t + n, text });
+  const content = (entries: ReturnType<typeof entry>[]) => ({ type: "import" as const, id: "i1", source: "discord" as const, entries });
+
+  it("reads back what it writes, with no sender in it", () => {
+    const c = content([entry(1), { ...entry(2), attachments: { "0b7a-upload_1": meta() } }]);
+    const bytes = encodeMlsDmContent(c);
+    assert.deepEqual(decodeMlsDmContent(bytes), c);
+    assert.ok(!new TextDecoder().decode(bytes).includes("senderId"));
+  });
+
+  it("drops a sender a batch claims, and refuses a bad batch", () => {
+    const claimed = raw({ v: 1, type: "import", id: "i2", source: "discord", entries: [{ ...entry(1), senderId: "mia" }] });
+    assert.deepEqual(decodeMlsDmContent(claimed), { ...content([entry(1)]), id: "i2" });
+    for (const bad of [
+      { v: 1, type: "import", id: "i3", source: "slack", entries: [entry(1)] },
+      { v: 1, type: "import", id: "i4", entries: [entry(1)] },
+      { v: 1, type: "import", id: "i5", source: "discord", entries: [] },
+      { v: 1, type: "import", id: "i6", source: "discord", entries: [{ ...entry(1), sentAt: -1 }] },
+    ]) assert.equal(readMlsDmContent(raw(bad)), null, JSON.stringify(bad));
+  });
+
+  it("files every entry under whoever sent the batch", () => {
+    const got = acceptImport(content([entry(1), entry(2)]), { senderId: "kari", at: t + 60_000 });
+    assert.deepEqual(got.map((e) => e.senderId), ["kari", "kari"]);
+    assert.deepEqual(got[0], { id: "d1", senderId: "kari", sentAt: t + 1, text: "melding 1" });
+  });
+
+  it("drops entries dated after the server got them, or before Discord existed", () => {
+    const old = { id: "d0", sentAt: Date.UTC(2014, 11, 31), text: "too old" };
+    const got = acceptImport(content([old, entry(1), entry(9)]), { senderId: "kari", at: t + 5 });
+    assert.deepEqual(got.map((e) => e.id), ["d1"]);
+  });
+
+  it("splits into batches that each fit one send, oldest first", () => {
+    let n = 0;
+    const entries = Array.from({ length: 30 }, (_, i) => entry(30 - i, "x".repeat(4_000)));
+    const batches = importBatches(entries, () => `i${n++}`);
+    assert.ok(batches.length > 1);
+    for (const b of batches) assert.ok(encodeMlsDmContent(b).length <= MAX_HISTORY_BATCH_BYTES);
+    const ids = batches.flatMap((b) => b.entries.map((e) => e.id));
+    assert.equal(ids.length, 30);
+    assert.equal(ids[0], "d1", "oldest first");
   });
 });
