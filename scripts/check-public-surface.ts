@@ -84,6 +84,7 @@ const REQUIRED = [
   "inflateRaw",
   "openZipBytes",
   "importId",
+  "retryAfterMs",
   "runDiscordImport",
   // pairing
   "createApproverPairing",

@@ -21,8 +21,8 @@ export interface ImportFileStore {
 /** What the job needs from the app. Each app supplies its own, and a test supplies fakes. */
 export interface ImportDeps {
   send: (content: MlsDmContent) => Promise<void>;
-  /** Null when Discord won't hand it over (expired, gone, refused). */
-  download: (url: string) => Promise<Omit<ImportFile, "name"> | null>;
+  /** Null when Discord won't hand it over (expired, gone, refused). `retryAfterMs` when it answers 429. */
+  download: (url: string) => Promise<Omit<ImportFile, "name"> | { retryAfterMs: number } | null>;
   upload: (file: ImportFile) => Promise<{ id: string; key: SealedAttachmentKey }>;
   store: ImportFileStore;
   sleep: (ms: number) => Promise<void>;
@@ -47,6 +47,15 @@ const DOWNLOADS_AT_ONCE = 4;
 /** `mls:send` allows about one send every two seconds sustained (RL_SEND in the server). */
 const SEND_GAP_MS = 2_000;
 const FILE_BATCH = 20;
+const DOWNLOAD_RETRIES = 5;
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
+const DEFAULT_RATE_LIMIT_WAIT_MS = 5_000;
+
+/** For a 429's Retry-After header. Only the seconds form: anything else gets the default wait. */
+export function retryAfterMs(header: string | null): number {
+  const seconds = Number(header);
+  return header && seconds >= 0 ? seconds * 1000 : DEFAULT_RATE_LIMIT_WAIT_MS;
+}
 
 export const importId = (discordId: string) => `discord-${discordId}`;
 
@@ -95,13 +104,25 @@ export async function runDiscordImport(
 
   const missing = new Set<string>();
   let next = 0;
+  let clearAt = 0;
+  const downloadFile = async (url: string) => {
+    for (let attempt = 0; attempt <= DOWNLOAD_RETRIES && !control.stopped(); attempt++) {
+      const wait = clearAt - Date.now();
+      if (wait > 0) await deps.sleep(wait);
+      const got = await deps.download(url).catch(() => null);
+      if (!got || !("retryAfterMs" in got)) return got;
+      // Every worker waits, or the other three spend the wait getting 429s too.
+      clearAt = Math.max(clearAt, Date.now() + Math.min(got.retryAfterMs, MAX_RATE_LIMIT_WAIT_MS));
+    }
+    return null;
+  };
   const worker = async () => {
     while (!control.stopped()) {
       await hold();
       if (next >= urls.length) break;
       const url = urls[next++];
       if (!(await deps.store.has(url))) {
-        const file = await deps.download(url).catch(() => null);
+        const file = await downloadFile(url);
         if (file) {
           p.bytes += file.bytes.length;
           await deps.store.put(url, file);

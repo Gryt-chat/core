@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { MlsDmContent } from "../mls/content.ts";
-import { importId, type ImportFile, runDiscordImport } from "./discordImportJob.ts";
+import { importId, type ImportFile, retryAfterMs, runDiscordImport } from "./discordImportJob.ts";
 
 const key = { id: "k", key: Buffer.alloc(32).toString("base64url"), iv: Buffer.alloc(12).toString("base64url") };
 
@@ -76,5 +76,45 @@ describe("the Discord import job (GRYT-1965)", () => {
       () => {},
     );
     assert.equal(d.sent.length, 1);
+  });
+
+  const control = { paused: () => false, stopped: () => false };
+  const png = { type: "image/png", bytes: new Uint8Array([1]) };
+  const oneFile = [{ discordId: "1", sentAt: 1, text: "", attachments: ["https://cdn.discordapp.com/a.png"] }];
+
+  it("waits out a 429 and tries the file again", async () => {
+    const d = deps();
+    const waits: number[] = [];
+    let calls = 0;
+    const result = await runDiscordImport(
+      oneFile,
+      { ...d.deps, sleep: async (ms) => void waits.push(ms), download: async () => (++calls === 1 ? { retryAfterMs: 30_000 } : png) },
+      control,
+      () => {},
+    );
+    assert.equal(calls, 2);
+    assert.equal(result.missing, 0);
+    assert.ok(waits.some((w) => w > 29_000 && w <= 30_000), "waited as long as Discord asked");
+  });
+
+  it("gives up on a file that stays rate limited, and caps the wait", async () => {
+    const d = deps();
+    const waits: number[] = [];
+    let calls = 0;
+    const result = await runDiscordImport(
+      oneFile,
+      { ...d.deps, sleep: async (ms) => void waits.push(ms), download: async () => (calls++, { retryAfterMs: 3_600_000 }) },
+      control,
+      () => {},
+    );
+    assert.equal(calls, 6);
+    assert.equal(result.missing, 1);
+    assert.ok(Math.max(...waits) <= 60_000);
+  });
+
+  it("reads Retry-After in seconds, and falls back when it can't", () => {
+    assert.equal(retryAfterMs("12"), 12_000);
+    assert.equal(retryAfterMs(null), 5_000);
+    assert.equal(retryAfterMs("Wed, 21 Oct 2026 07:28:00 GMT"), 5_000);
   });
 });
