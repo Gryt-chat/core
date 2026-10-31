@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { MlsDmContent } from "../mls/content.ts";
-import { importId, type ImportFile, retryAfterMs, runDiscordImport } from "./discordImportJob.ts";
+import { type ImportDeps, importId, type ImportFile, retryAfterMs, runDiscordImport } from "./discordImportJob.ts";
 
 const key = { id: "k", key: Buffer.alloc(32).toString("base64url"), iv: Buffer.alloc(12).toString("base64url") };
 
@@ -110,6 +110,43 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.equal(calls, 6);
     assert.equal(result.missing, 1);
     assert.ok(Math.max(...waits) <= 60_000);
+  });
+
+  it("runs downloads and uploads together, as many as it's told", async () => {
+    const urls = Array.from({ length: 8 }, (_, i) => `https://cdn.discordapp.com/attachments/1/${i}/f${i}.png`);
+    const messages = urls.map((u, i) => ({ discordId: String(i), sentAt: 1_500_000_000_000 + i, text: "", attachments: [u] }));
+    const files = new Map<string, { type: string; bytes: Uint8Array }>();
+    let now = 0;
+    let downloads = 0;
+    let uploads = 0;
+    const gate = async (add: (n: number) => void) => {
+      add(1);
+      await new Promise((r) => setTimeout(r, 1));
+      add(-1);
+    };
+    const deps: ImportDeps = {
+      send: async () => {},
+      download: async () => {
+        await gate((n) => { now += n; downloads = Math.max(downloads, now); });
+        return { type: "image/png", bytes: new Uint8Array(1) };
+      },
+      upload: async (f) => {
+        await gate((n) => { now += n; uploads = Math.max(uploads, now); });
+        return { id: `id${f.name.replace(/\W/g, "")}`, key: { id: "k", key: "AA", iv: "AA" } };
+      },
+      store: {
+        has: async (u) => files.has(u),
+        put: async (u, f) => { files.set(u, f); },
+        take: async (u) => files.get(u) ?? null,
+        drop: async (u) => { files.delete(u); },
+      },
+      sleep: async () => {},
+      newId: () => "b",
+      transfersAtOnce: 3,
+    };
+    await runDiscordImport(messages, deps, { paused: () => false, stopped: () => false }, () => {});
+    assert.equal(downloads, 3);
+    assert.equal(uploads, 3);
   });
 
   it("reads Retry-After in seconds, and falls back when it can't", () => {
