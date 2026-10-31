@@ -149,6 +149,33 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.equal(uploads, 3);
   });
 
+  it("waits out an upload 429, and notes a file too big for the server instead of stopping", async () => {
+    const h = deps();
+    let refused = 0;
+    const sleeps: number[] = [];
+    const url = (n: string) => `https://cdn.discordapp.com/attachments/1/2/${n}.png`;
+    const messages = [
+      { discordId: "1", sentAt: 1_500_000_000_000, text: "ok", attachments: [url("a")] },
+      { discordId: "2", sentAt: 1_500_000_000_001, text: "big", attachments: [url("big")] },
+    ];
+    const done = await runDiscordImport(messages, {
+      ...h.deps,
+      sleep: async (ms: number) => void sleeps.push(ms),
+      upload: async (f: ImportFile) => {
+        if (f.name === "big.png") return { tooLarge: true as const };
+        if (refused++ === 0) return { retryAfterMs: 1000 };
+        return { id: "up", key };
+      },
+    }, { paused: () => false, stopped: () => false }, () => {});
+    assert.equal(done.tooLarge, 1);
+    assert.equal(done.missing, 0);
+    assert.ok(sleeps.some((ms) => ms > 0));
+    const entries = h.sent.flatMap((c) => c.entries);
+    assert.deepEqual(Object.keys(entries.find((e) => e.text === "ok")?.attachments ?? {}), ["up"]);
+    assert.match(entries.find((e) => e.text.startsWith("big"))?.text ?? "", /too big for this server/);
+    assert.equal(h.stored.size, 0, "nothing is left in the store");
+  });
+
   it("reads Retry-After in seconds, and falls back when it can't", () => {
     assert.equal(retryAfterMs("12"), 12_000);
     assert.equal(retryAfterMs(null), 5_000);
