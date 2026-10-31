@@ -1,4 +1,5 @@
-import { historyBatches, type MlsDmContent, type MlsHistoryEntry } from "./content.ts";
+import { historyBatches } from "./content.ts";
+import type { MlsDmContent, MlsHistoryEntry } from "./content.js";
 
 /* `chat:delete` scores 1 and decays one per 3 s (RL_DELETE); `chat:fetch` allows 15 in 10 s. */
 const DELETE_GAP_MS = 3_100;
