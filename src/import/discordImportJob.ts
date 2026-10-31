@@ -23,7 +23,8 @@ export interface ImportDeps {
   send: (content: MlsDmContent) => Promise<void>;
   /** Null when Discord won't hand it over (expired, gone, refused). `retryAfterMs` when it answers 429. */
   download: (url: string) => Promise<Omit<ImportFile, "name"> | { retryAfterMs: number } | null>;
-  upload: (file: ImportFile) => Promise<{ id: string; key: SealedAttachmentKey }>;
+  /** `retryAfterMs` when the server answers 429, `tooLarge` when it refuses the file's size. */
+  upload: (file: ImportFile) => Promise<{ id: string; key: SealedAttachmentKey } | { retryAfterMs: number } | { tooLarge: true }>;
   store: ImportFileStore;
   sleep: (ms: number) => Promise<void>;
   newId: () => string;
@@ -36,6 +37,8 @@ export interface ImportProgress {
   downloaded: { done: number; total: number };
   sent: { done: number; total: number };
   missing: number;
+  /** Files this server won't take, each left out with a note on its message. */
+  tooLarge: number;
   bytes: number;
   startedAt: number;
 }
@@ -50,6 +53,8 @@ const TRANSFERS_AT_ONCE = 16;
 const SEND_GAP_MS = 2_000;
 const FILE_BATCH = 20;
 const DOWNLOAD_RETRIES = 5;
+/* A server allows 30 uploads a minute with a ban after, so a big import waits many times over. */
+const UPLOAD_RETRIES = 200;
 const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 const DEFAULT_RATE_LIMIT_WAIT_MS = 5_000;
 
@@ -83,6 +88,7 @@ export async function runDiscordImport(
     downloaded: { done: 0, total: urls.length },
     sent: { done: 0, total: urls.length },
     missing: 0,
+    tooLarge: 0,
     bytes: 0,
     startedAt: Date.now(),
   };
@@ -143,11 +149,30 @@ export async function runDiscordImport(
   });
 
   const uploaded = new Map<string, { id: string; key: SealedAttachmentKey }>();
+  const tooLarge = new Set<string>();
+  let uploadClearAt = 0;
+  const uploadFile = async (file: ImportFile) => {
+    for (let attempt = 0; attempt <= UPLOAD_RETRIES && !control.stopped(); attempt++) {
+      const wait = uploadClearAt - Date.now();
+      if (wait > 0) await deps.sleep(wait);
+      const got = await deps.upload(file);
+      if (!("retryAfterMs" in got)) return got;
+      uploadClearAt = Math.max(uploadClearAt, Date.now() + Math.min(got.retryAfterMs, MAX_RATE_LIMIT_WAIT_MS));
+    }
+    if (control.stopped()) return null;
+    throw new Error("The server kept refusing uploads.");
+  };
   await eachAtOnce(async (url) => {
     const stored = missing.has(url) ? null : await deps.store.take(url);
     if (stored) {
-      uploaded.set(url, await deps.upload({ name: nameOf(url), ...stored }));
-      await deps.store.drop(url);
+      const up = await uploadFile({ name: nameOf(url), ...stored });
+      if (up && "tooLarge" in up) {
+        tooLarge.add(url);
+        p.tooLarge = tooLarge.size;
+      } else if (up) {
+        uploaded.set(url, up);
+      }
+      if (up) await deps.store.drop(url);
     }
     p.sent.done++;
     tick();
@@ -161,9 +186,11 @@ export async function runDiscordImport(
       const up = uploaded.get(url);
       if (up) attachments[up.id] = up.key;
     }
-    const lost = m.attachments.length - Object.keys(attachments).length;
-    const note = lost ? `${lost === 1 ? "A file" : `${lost} files`} from Discord couldn’t be downloaded.` : "";
-    const text = [m.text, note].filter(Boolean).join("\n");
+    const big = m.attachments.filter((u) => tooLarge.has(u)).length;
+    const lost = m.attachments.length - Object.keys(attachments).length - big;
+    const lostNote = lost ? `${lost === 1 ? "A file" : `${lost} files`} from Discord couldn’t be downloaded.` : "";
+    const bigNote = big ? `${big === 1 ? "A file" : `${big} files`} from Discord ${big === 1 ? "was" : "were"} too big for this server.` : "";
+    const text = [m.text, lostNote, bigNote].filter(Boolean).join("\n");
     pending.push({ id: importId(m.discordId), sentAt: m.sentAt, text, ...(Object.keys(attachments).length ? { attachments } : {}) });
     if (pending.length >= FILE_BATCH) {
       await sendAll(pending);
