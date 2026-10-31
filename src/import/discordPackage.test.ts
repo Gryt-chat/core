@@ -9,6 +9,7 @@ import {
   parseCsv,
   parseDiscordTime,
   parseLooseJson,
+  readableDiscordText,
   readDiscordDm,
 } from "./discordPackage.ts";
 
@@ -38,6 +39,30 @@ lines", "Attachments": ""},
   "Messages/c33/messages.json": JSON.stringify([{ ID: "1", Timestamp: "2024-01-01 00:00:00", Contents: "x", Attachments: "" }]),
   "Messages/c44/channel.json": JSON.stringify({ id: "44", type: 0, guild: { id: "5", name: "Some Server" } }),
   "Messages/c44/messages.json": JSON.stringify([{ ID: "2", Timestamp: "2024-01-01 00:00:00", Contents: "y", Attachments: "" }]),
+});
+
+describe("Discord's markup in a message (GRYT-1982)", () => {
+  const people = new Map([["1", "Kari"]]);
+  const channels = { 5: "general, A server", 6: "Unknown channel, B" };
+  it("turns it into text a person can read", () => {
+    assert.equal(readableDiscordText("hei <:pog:123> <a:dance:456>", people, channels), "hei :pog: :dance:");
+    assert.equal(readableDiscordText("<@1> <@!1> <@2>", people, channels), "@Kari @Kari @someone");
+    assert.equal(readableDiscordText("<@&9> <#5> <#6> <#7>", people, channels), "@role #general #channel #channel");
+  });
+  it("leaves other text alone", () => {
+    const plain = "a < b, <https://gryt.chat> <:notemoji> <@me> `x`";
+    assert.equal(readableDiscordText(plain, people, channels), plain);
+  });
+  it("converts while reading a DM, naming a friend and the person it's with", async () => {
+    const read = pkg({
+      "Account/user.json": JSON.stringify({ id: SELF, global_name: "Me", relationships: [{ user: { id: MIA, username: "mia" } }] }),
+      "Messages/index.json": JSON.stringify({ 77: "Direct Message with kari.k#0" }),
+      "Messages/c77/channel.json": JSON.stringify({ id: "77", type: "DM", recipients: [SELF, KARI] }),
+      "Messages/c77/messages.json": JSON.stringify([{ ID: "1", Timestamp: "2023-04-12 21:14:05", Contents: `<@${KARI}> <@${MIA}> <@${SELF}> <:ok:1>`, Attachments: "" }]),
+    });
+    const [m] = await readDiscordDm(read, "77");
+    assert.equal(m.text, "@kari.k @mia @Me :ok:");
+  });
 });
 
 describe("Discord data package (GRYT-1965)", () => {
