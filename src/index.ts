@@ -107,6 +107,7 @@ export {
   MLS_DM_CONTENT_VERSION,
   type MlsDmContent,
   type MlsHistoryEntry,
+  type MlsHistoryReaction,
   type MlsImportEntry,
   readMlsDmContent,
 } from "./mls/content.js";
