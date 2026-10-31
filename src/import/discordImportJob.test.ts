@@ -261,6 +261,22 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.equal(done.tooLarge, 1);
   });
 
+  it("never names more than 10 files in one send, which the server refuses", async () => {
+    const h = deps();
+    let n = 0;
+    const messages = Array.from({ length: 20 }, (_, i) => ({
+      discordId: String(i),
+      sentAt: 1_500_000_000_000 + i,
+      text: "x",
+      attachments: Array.from({ length: i === 0 ? 10 : 3 }, (_, j) => `https://cdn.discordapp.com/attachments/1/${i}/f${j}.png`),
+    }));
+    await runDiscordImport(messages, { ...h.deps, upload: async () => ({ id: `up-${n++}`, key }) }, { paused: () => false, stopped: () => false }, () => {});
+    const files = h.sent.map((c) => c.entries.reduce((sum, e) => sum + Object.keys(e.attachments ?? {}).length, 0));
+    assert.ok(files.every((count) => count <= 10), String(files));
+    assert.equal(files.reduce((a, b) => a + b, 0), 67);
+    assert.equal(h.sent.flatMap((c) => c.entries).length, 20);
+  });
+
   it("reads Retry-After in seconds, and falls back when it can't", () => {
     assert.equal(retryAfterMs("12"), 12_000);
     assert.equal(retryAfterMs(null), 5_000);

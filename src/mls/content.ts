@@ -218,9 +218,31 @@ export function historyBatches(entries: MlsHistoryEntry[], newId: () => string):
     .map((batch) => ({ type: "history", id: newId(), entries: batch }));
 }
 
+/* The server takes this many upload ids with one send, and a batch has to name all of its files. */
+const MAX_FILES_PER_SEND = 10;
+
+function withinFileLimit(batch: MlsImportEntry[]): MlsImportEntry[][] {
+  const out: MlsImportEntry[][] = [];
+  let current: MlsImportEntry[] = [];
+  let files = 0;
+  for (const e of batch) {
+    const count = Object.keys(e.attachments ?? {}).length;
+    if (current.length && files + count > MAX_FILES_PER_SEND) {
+      out.push(current);
+      current = [];
+      files = 0;
+    }
+    current.push(e);
+    files += count;
+  }
+  if (current.length) out.push(current);
+  return out;
+}
+
 /** An import as batches small enough to send, oldest first, the same way `historyBatches` splits. */
 export function importBatches(entries: MlsImportEntry[], newId: () => string): Extract<MlsDmContent, { type: "import" }>[] {
   return sizedBatches(entries, importBody, (raw) => readImportEntry(raw) !== null, { type: "import", source: "discord" })
+    .flatMap(withinFileLimit)
     .map((batch) => ({ type: "import", id: newId(), source: "discord", entries: batch }));
 }
 
