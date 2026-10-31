@@ -27,6 +27,8 @@ export interface ImportDeps {
   store: ImportFileStore;
   sleep: (ms: number) => Promise<void>;
   newId: () => string;
+  /** Downloads and uploads running together. A phone holding each file in memory wants fewer. */
+  transfersAtOnce?: number;
 }
 
 export interface ImportProgress {
@@ -43,7 +45,7 @@ export interface ImportControl {
   stopped: () => boolean;
 }
 
-const DOWNLOADS_AT_ONCE = 4;
+const TRANSFERS_AT_ONCE = 16;
 /** `mls:send` allows about one send every two seconds sustained (RL_SEND in the server). */
 const SEND_GAP_MS = 2_000;
 const FILE_BATCH = 20;
@@ -103,7 +105,6 @@ export async function runDiscordImport(
   await sendAll(messages.filter((m) => m.attachments.length === 0).map((m) => ({ id: importId(m.discordId), sentAt: m.sentAt, text: m.text })));
 
   const missing = new Set<string>();
-  let next = 0;
   let clearAt = 0;
   const downloadFile = async (url: string) => {
     for (let attempt = 0; attempt <= DOWNLOAD_RETRIES && !control.stopped(); attempt++) {
@@ -116,44 +117,49 @@ export async function runDiscordImport(
     }
     return null;
   };
-  const worker = async () => {
-    while (!control.stopped()) {
-      await hold();
-      if (next >= urls.length) break;
-      const url = urls[next++];
-      if (!(await deps.store.has(url))) {
-        const file = await downloadFile(url);
-        if (file) {
-          p.bytes += file.bytes.length;
-          await deps.store.put(url, file);
-        } else {
-          missing.add(url);
-          p.missing = missing.size;
-        }
+  const eachAtOnce = async (run: (url: string) => Promise<void>) => {
+    let next = 0;
+    await Promise.all(Array.from({ length: deps.transfersAtOnce ?? TRANSFERS_AT_ONCE }, async () => {
+      while (!control.stopped()) {
+        await hold();
+        if (next >= urls.length) break;
+        await run(urls[next++]);
       }
-      p.downloaded.done++;
-      tick();
-    }
+    }));
   };
-  await Promise.all(Array.from({ length: DOWNLOADS_AT_ONCE }, worker));
+  await eachAtOnce(async (url) => {
+    if (!(await deps.store.has(url))) {
+      const file = await downloadFile(url);
+      if (file) {
+        p.bytes += file.bytes.length;
+        await deps.store.put(url, file);
+      } else {
+        missing.add(url);
+        p.missing = missing.size;
+      }
+    }
+    p.downloaded.done++;
+    tick();
+  });
 
   const uploaded = new Map<string, { id: string; key: SealedAttachmentKey }>();
+  await eachAtOnce(async (url) => {
+    const stored = missing.has(url) ? null : await deps.store.take(url);
+    if (stored) {
+      uploaded.set(url, await deps.upload({ name: nameOf(url), ...stored }));
+      await deps.store.drop(url);
+    }
+    p.sent.done++;
+    tick();
+  });
+
   let pending: MlsImportEntry[] = [];
   for (const m of withFiles) {
     if (control.stopped()) break;
     const attachments: Record<string, SealedAttachmentKey> = {};
     for (const url of m.attachments) {
-      await hold();
-      let up = uploaded.get(url);
-      const stored = up || missing.has(url) ? null : await deps.store.take(url);
-      if (stored) {
-        up = await deps.upload({ name: nameOf(url), ...stored });
-        uploaded.set(url, up);
-        await deps.store.drop(url);
-      }
+      const up = uploaded.get(url);
       if (up) attachments[up.id] = up.key;
-      p.sent.done++;
-      tick();
     }
     const lost = m.attachments.length - Object.keys(attachments).length;
     const note = lost ? `${lost === 1 ? "A file" : `${lost} files`} from Discord couldn’t be downloaded.` : "";
