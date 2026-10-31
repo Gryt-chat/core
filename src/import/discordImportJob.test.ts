@@ -219,6 +219,48 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.equal(decodeMlsDmContent(raw({ a: key }))?.type, "import_bundle");
   });
 
+  it("sends each batch right after its files, keeps nothing on disk, and skips what's already here", async () => {
+    const url = (n: number) => `https://cdn.discordapp.com/attachments/1/2/f${n}.png`;
+    const messages = Array.from({ length: 45 }, (_, i) => ({ discordId: String(i), sentAt: 1_500_000_000_000 + i, text: `m${i}`, attachments: [url(i)] }));
+    const control = { paused: () => false, stopped: () => false };
+    const order: string[] = [];
+    const h = deps();
+    await runDiscordImport(messages, {
+      ...h.deps,
+      send: async (c: MlsDmContent) => { h.sent.push(c as never); order.push("send"); },
+      upload: async (f: ImportFile) => { order.push("up"); return { id: f.name.replace(".", "-"), key }; },
+    }, control, () => {});
+    assert.equal(order.indexOf("send"), 20, "the first 20 files, then their messages");
+    assert.equal(h.stored.size, 0);
+    assert.equal(h.sent.flatMap((c) => c.entries).length, 45);
+
+    const again = deps();
+    const done = await runDiscordImport(messages, { ...again.deps, alreadyHas: async (id: string) => id !== importId("44") }, control, () => {});
+    assert.equal(again.downloaded.length, 1, "only the one that isn't here");
+    assert.equal(done.messages.done, 45);
+  });
+
+  it("keeps a file it couldn't upload, so the next run doesn't download it again", async () => {
+    const url = "https://cdn.discordapp.com/attachments/1/2/a.png";
+    const messages = [{ discordId: "1", sentAt: 1_500_000_000_000, text: "x", attachments: [url] }];
+    const h = deps();
+    await assert.rejects(runDiscordImport(messages, { ...h.deps, upload: async () => { throw new Error("offline"); } }, { paused: () => false, stopped: () => false }, () => {}));
+    assert.equal(h.stored.size, 1);
+    const before = h.downloaded.length;
+    await runDiscordImport(messages, h.deps, { paused: () => false, stopped: () => false }, () => {});
+    assert.equal(h.downloaded.length, before);
+    assert.equal(h.stored.size, 0);
+  });
+
+  it("doesn't try to upload a file over the server's limit", async () => {
+    const h = deps();
+    let uploads = 0;
+    const messages = [{ discordId: "1", sentAt: 1_500_000_000_000, text: "x", attachments: ["https://cdn.discordapp.com/attachments/1/2/a.png"] }];
+    const done = await runDiscordImport(messages, { ...h.deps, maxFileBytes: 2, upload: async () => { uploads++; return { id: "up", key }; } }, { paused: () => false, stopped: () => false }, () => {});
+    assert.equal(uploads, 0);
+    assert.equal(done.tooLarge, 1);
+  });
+
   it("reads Retry-After in seconds, and falls back when it can't", () => {
     assert.equal(retryAfterMs("12"), 12_000);
     assert.equal(retryAfterMs(null), 5_000);

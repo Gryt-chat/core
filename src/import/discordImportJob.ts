@@ -32,6 +32,10 @@ export interface ImportDeps {
   transfersAtOnce?: number;
   /** Send a big import's text as one sealed upload. Only for apps that read `import_bundle`. */
   bundles?: boolean;
+  /** Whether this device's history already holds an entry, so a second run skips it. */
+  alreadyHas?: (entryId: string) => Promise<boolean>;
+  /** The server's file size limit, so a file over it is never sealed and sent to be refused. */
+  maxFileBytes?: number | null;
 }
 
 export interface ImportProgress {
@@ -78,17 +82,19 @@ function nameOf(url: string): string {
   }
 }
 
-/** Messages without files first, then every file downloaded to the store, then the messages that carry files. */
+/** Text first, then 20 messages at a time: their files go straight through, then those messages go. */
 export async function runDiscordImport(
   messages: DiscordPackageMessage[],
   deps: ImportDeps,
   control: ImportControl,
   report: (p: ImportProgress) => void,
 ): Promise<ImportProgress> {
-  const withFiles = messages.filter((m) => m.attachments.length > 0);
+  const fresh: DiscordPackageMessage[] = [];
+  for (const m of messages) if (!(await deps.alreadyHas?.(importId(m.discordId)))) fresh.push(m);
+  const withFiles = fresh.filter((m) => m.attachments.length > 0);
   const urls = [...new Set(withFiles.flatMap((m) => m.attachments))];
   const p: ImportProgress = {
-    messages: { done: 0, total: messages.length },
+    messages: { done: messages.length - fresh.length, total: messages.length },
     downloaded: { done: 0, total: urls.length },
     sent: { done: 0, total: urls.length },
     missing: 0,
@@ -134,7 +140,7 @@ export async function runDiscordImport(
     }
   };
 
-  const textOnly = messages.filter((m) => m.attachments.length === 0).map((m) => ({ id: importId(m.discordId), sentAt: m.sentAt, text: m.text }));
+  const textOnly = fresh.filter((m) => m.attachments.length === 0).map((m) => ({ id: importId(m.discordId), sentAt: m.sentAt, text: m.text }));
   if (!(deps.bundles && textOnly.length > BUNDLE_ABOVE && !control.stopped() && (await sendBundle(textOnly)))) await sendAll(textOnly);
 
   const missing = new Set<string>();
@@ -150,69 +156,76 @@ export async function runDiscordImport(
     }
     return null;
   };
-  const eachAtOnce = async (run: (url: string) => Promise<void>) => {
-    let next = 0;
-    await Promise.all(Array.from({ length: deps.transfersAtOnce ?? TRANSFERS_AT_ONCE }, async () => {
-      while (!control.stopped()) {
-        await hold();
-        if (next >= urls.length) break;
-        await run(urls[next++]);
-      }
-    }));
-  };
-  await eachAtOnce(async (url) => {
-    if (!(await deps.store.has(url))) {
-      const file = await downloadFile(url);
-      if (file) {
-        p.bytes += file.bytes.length;
-        await deps.store.put(url, file);
-      } else {
+  const uploaded = new Map<string, { id: string; key: SealedAttachmentKey }>();
+  const tooLarge = new Set<string>();
+  const finished = new Set<string>();
+  /* The file is only kept if it can't go up now, so a stop or a failure never downloads it twice. */
+  const transfer = async (url: string) => {
+    if (finished.has(url)) return;
+    finished.add(url);
+    let file: Omit<ImportFile, "name"> | null = await deps.store.take(url);
+    if (!file) {
+      file = await downloadFile(url);
+      if (file) p.bytes += file.bytes.length;
+      else if (!control.stopped()) {
         missing.add(url);
         p.missing = missing.size;
       }
     }
+    if (control.stopped()) {
+      if (file) await deps.store.put(url, file);
+      return;
+    }
     p.downloaded.done++;
     tick();
-  });
-
-  const uploaded = new Map<string, { id: string; key: SealedAttachmentKey }>();
-  const tooLarge = new Set<string>();
-  await eachAtOnce(async (url) => {
-    const stored = missing.has(url) ? null : await deps.store.take(url);
-    if (stored) {
-      const up = await uploadFile({ name: nameOf(url), ...stored });
-      if (up && "tooLarge" in up) {
+    if (file) {
+      let up;
+      try {
+        up = deps.maxFileBytes && file.bytes.length > deps.maxFileBytes ? { tooLarge: true as const } : await uploadFile({ name: nameOf(url), ...file });
+      } catch (e) {
+        await deps.store.put(url, file);
+        throw e;
+      }
+      if (!up) {
+        await deps.store.put(url, file);
+        return;
+      }
+      if ("tooLarge" in up) {
         tooLarge.add(url);
         p.tooLarge = tooLarge.size;
-      } else if (up) {
-        uploaded.set(url, up);
-      }
-      if (up) await deps.store.drop(url);
+      } else uploaded.set(url, up);
+      await deps.store.drop(url);
     }
     p.sent.done++;
     tick();
-  });
-
-  let pending: MlsImportEntry[] = [];
-  for (const m of withFiles) {
+  };
+  const atOnce = deps.transfersAtOnce ?? TRANSFERS_AT_ONCE;
+  for (let i = 0; i < withFiles.length && !control.stopped(); i += FILE_BATCH) {
+    const chunk = withFiles.slice(i, i + FILE_BATCH);
+    const todo = [...new Set(chunk.flatMap((m) => m.attachments))];
+    let next = 0;
+    await Promise.all(Array.from({ length: atOnce }, async () => {
+      while (!control.stopped()) {
+        await hold();
+        if (next >= todo.length) break;
+        await transfer(todo[next++]);
+      }
+    }));
     if (control.stopped()) break;
-    const attachments: Record<string, SealedAttachmentKey> = {};
-    for (const url of m.attachments) {
-      const up = uploaded.get(url);
-      if (up) attachments[up.id] = up.key;
-    }
-    const big = m.attachments.filter((u) => tooLarge.has(u)).length;
-    const lost = m.attachments.length - Object.keys(attachments).length - big;
-    const lostNote = lost ? `${lost === 1 ? "A file" : `${lost} files`} from Discord couldn’t be downloaded.` : "";
-    const bigNote = big ? `${big === 1 ? "A file" : `${big} files`} from Discord ${big === 1 ? "was" : "were"} too big for this server.` : "";
-    const text = [m.text, lostNote, bigNote].filter(Boolean).join("\n");
-    pending.push({ id: importId(m.discordId), sentAt: m.sentAt, text, ...(Object.keys(attachments).length ? { attachments } : {}) });
-    if (pending.length >= FILE_BATCH) {
-      await sendAll(pending);
-      pending = [];
-    }
+    await sendAll(chunk.map((m) => {
+      const attachments: Record<string, SealedAttachmentKey> = {};
+      for (const url of m.attachments) {
+        const up = uploaded.get(url);
+        if (up) attachments[up.id] = up.key;
+      }
+      const big = m.attachments.filter((u) => tooLarge.has(u)).length;
+      const lost = m.attachments.length - Object.keys(attachments).length - big;
+      const lostNote = lost ? `${lost === 1 ? "A file" : `${lost} files`} from Discord couldn’t be downloaded.` : "";
+      const bigNote = big ? `${big === 1 ? "A file" : `${big} files`} from Discord ${big === 1 ? "was" : "were"} too big for this server.` : "";
+      const text = [m.text, lostNote, bigNote].filter(Boolean).join("\n");
+      return { id: importId(m.discordId), sentAt: m.sentAt, text, ...(Object.keys(attachments).length ? { attachments } : {}) };
+    }));
   }
-  if (pending.length) await sendAll(pending);
   tick();
   return p;
 }
