@@ -197,7 +197,39 @@ export async function listDiscordDms(files: PackageFiles): Promise<DiscordPackag
 export async function readDiscordDm(files: PackageFiles, channelId: string): Promise<DiscordPackageMessage[]> {
   const idx = indexNames(files.names);
   const dir = channelFolder(idx, channelId);
-  return dir ? messagesIn(files, idx, dir) : [];
+  if (!dir) return [];
+  const names = await peopleIn(files, idx, channelId);
+  const channels = ((await readJson(files, idx, "messages/index.json")) ?? {}) as Record<string, unknown>;
+  return (await messagesIn(files, idx, dir)).map((m) => ({ ...m, text: readableDiscordText(m.text, names, channels) }));
+}
+
+async function peopleIn(files: PackageFiles, idx: Index, channelId: string): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const user = (await readJson(files, idx, "account/user.json")) as Record<string, unknown> | undefined;
+  const add = (u: { id?: unknown; global_name?: unknown; username?: unknown } | null | undefined) => {
+    const name = u?.global_name || u?.username;
+    if (typeof u?.id === "string" && typeof name === "string") names.set(u.id, name);
+  };
+  add(user);
+  for (const rel of Array.isArray(user?.relationships) ? user.relationships : []) add((rel as { user?: Record<string, unknown> } | null)?.user);
+  const channel = (await readJson(files, idx, `messages/c${channelId}/channel.json`)) as { recipients?: unknown } | undefined;
+  const label = ((await readJson(files, idx, "messages/index.json")) as Record<string, unknown> | undefined)?.[channelId];
+  const peer = Array.isArray(channel?.recipients) ? channel.recipients.find((id) => id !== user?.id) : undefined;
+  if (typeof peer === "string" && typeof label === "string" && !names.has(peer)) names.set(peer, displayName(label));
+  return names;
+}
+
+/** Discord's own markup as text a person can read. A custom emoji can't come over, so it keeps its name. */
+export function readableDiscordText(text: string, people: ReadonlyMap<string, string>, channels: Readonly<Record<string, unknown>>): string {
+  return text
+    .replace(/<a?:(\w+):\d+>/g, ":$1:")
+    .replace(/<@!?(\d+)>/g, (_, id: string) => `@${people.get(id) ?? "someone"}`)
+    .replace(/<@&\d+>/g, "@role")
+    .replace(/<#(\d+)>/g, (_, id: string) => {
+      const label = channels[id];
+      const name = typeof label === "string" && !/^unknown/i.test(label) ? label.split(",")[0].trim() : "channel";
+      return `#${name}`;
+    });
 }
 
 /** The earliest `ex` (hex Unix seconds) among signed CDN links, or null when none carry one. */
