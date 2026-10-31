@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent, readImportBundle } from "../mls/content.ts";
-import { type ImportDeps, importId, type ImportFile, retryAfterMs, runDiscordImport } from "./discordImportJob.ts";
+import { type ImportDeps, importId, type ImportFile, retryAfterMs, retryLeftOut, runDiscordImport } from "./discordImportJob.ts";
 
 const key = { id: "k", key: Buffer.alloc(32).toString("base64url"), iv: Buffer.alloc(12).toString("base64url") };
 
@@ -275,6 +275,21 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.ok(files.every((count) => count <= 10), String(files));
     assert.equal(files.reduce((a, b) => a + b, 0), 67);
     assert.equal(h.sent.flatMap((c) => c.entries).length, 20);
+  });
+
+  it("lists what it left out and why, and a retry sends only those files, beside the originals", async () => {
+    const url = (n: string) => `https://cdn.discordapp.com/attachments/1/2/${n}.png`;
+    const messages = [{ discordId: "1", sentAt: 1_500_000_000_000, text: "x", attachments: [url("big"), url("ok")] }, { discordId: "2", sentAt: 1_500_000_000_001, text: "y", attachments: [url("gone")] }];
+    const h = deps();
+    const control = { paused: () => false, stopped: () => false };
+    const done = await runDiscordImport(messages, { ...h.deps, upload: async (f: ImportFile) => (f.name === "big.png" ? { tooLarge: true as const } : { id: "up", key }) }, control, () => {});
+    assert.deepEqual(done.leftOut.map((l) => [l.name, l.reason, l.size]).sort(), [["big.png", "too_large", 3], ["gone.png", "not_downloaded", null]]);
+
+    const again = retryLeftOut(messages, new Set([url("big")]));
+    assert.deepEqual(again.map((m) => [m.discordId, m.text, m.attachments]), [["1-files", "", [url("big")]]]);
+    const h2 = deps();
+    await runDiscordImport(again, h2.deps, control, () => {});
+    assert.equal(h2.sent.flatMap((c) => c.entries)[0].id, importId("1-files"));
   });
 
   it("reads Retry-After in seconds, and falls back when it can't", () => {

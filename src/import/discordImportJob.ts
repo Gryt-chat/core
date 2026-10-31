@@ -38,6 +38,15 @@ export interface ImportDeps {
   maxFileBytes?: number | null;
 }
 
+/** A file that didn't come over, for the receipt. */
+export interface ImportLeftOut {
+  url: string;
+  name: string;
+  /** Bytes, when it was downloaded. */
+  size: number | null;
+  reason: "too_large" | "not_downloaded";
+}
+
 export interface ImportProgress {
   messages: { done: number; total: number };
   downloaded: { done: number; total: number };
@@ -46,6 +55,7 @@ export interface ImportProgress {
   /** Files this server won't take, each left out with a note on its message. */
   tooLarge: number;
   bytes: number;
+  leftOut: ImportLeftOut[];
   startedAt: number;
 }
 
@@ -82,6 +92,17 @@ function nameOf(url: string): string {
   }
 }
 
+/**
+ * Another go at files left out: new entries beside the originals, holding only those files.
+ * A first run's message is already in history, and a repeat of its id is skipped there.
+ */
+export function retryLeftOut(messages: DiscordPackageMessage[], urls: ReadonlySet<string>): DiscordPackageMessage[] {
+  return messages.flatMap((m) => {
+    const attachments = m.attachments.filter((u) => urls.has(u));
+    return attachments.length ? [{ ...m, discordId: `${m.discordId}-files`, text: "", attachments }] : [];
+  });
+}
+
 /** Text first, then 20 messages at a time: their files go straight through, then those messages go. */
 export async function runDiscordImport(
   messages: DiscordPackageMessage[],
@@ -100,9 +121,10 @@ export async function runDiscordImport(
     missing: 0,
     tooLarge: 0,
     bytes: 0,
+    leftOut: [],
     startedAt: Date.now(),
   };
-  const tick = () => report({ ...p, messages: { ...p.messages }, downloaded: { ...p.downloaded }, sent: { ...p.sent } });
+  const tick = () => report({ ...p, leftOut: [...p.leftOut], messages: { ...p.messages }, downloaded: { ...p.downloaded }, sent: { ...p.sent } });
   tick();
   const hold = async () => {
     while (control.paused() && !control.stopped()) await deps.sleep(500);
@@ -170,6 +192,7 @@ export async function runDiscordImport(
       else if (!control.stopped()) {
         missing.add(url);
         p.missing = missing.size;
+        p.leftOut.push({ url, name: nameOf(url), size: null, reason: "not_downloaded" });
       }
     }
     if (control.stopped()) {
@@ -193,6 +216,7 @@ export async function runDiscordImport(
       if ("tooLarge" in up) {
         tooLarge.add(url);
         p.tooLarge = tooLarge.size;
+        p.leftOut.push({ url, name: nameOf(url), size: file.bytes.length, reason: "too_large" });
       } else uploaded.set(url, up);
       await deps.store.drop(url);
     }

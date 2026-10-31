@@ -132,7 +132,9 @@ export {
   importId,
   type ImportProgress,
   retryAfterMs,
+  retryLeftOut,
   runDiscordImport,
+  type ImportLeftOut,
 } from "./import/discordImportJob.js";
 export type {
   DmSealingMode,
