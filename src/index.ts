@@ -96,6 +96,7 @@ export {
 
 export { createMlsDmDriver, MlsDriverError, type MlsDriverErrorCode } from "./mls/dmDriver.js";
 export { mlsPinsFromPeerPins } from "./mls/pins.js";
+export { reencryptedId, reencryptMine, type ReencryptCandidate, type ReencryptDeps } from "./mls/reencrypt.js";
 export {
   decodeMlsDmContent,
   encodeMlsDmContent,
