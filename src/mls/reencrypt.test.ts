@@ -13,7 +13,7 @@ const items = [
   row("b", { reply_to_message_id: "a" }),
   row("c", { reply_to_message_id: "gone" }),
   row("file", { attachments: ["f"] }),
-  row("liked", { reactions: [{}] }),
+  row("liked", { reactions: [{ src: "👍", users: ["sable"] }] }),
   row("pinned", { pinned_at: AT }),
   row("theirs", { sender_server_id: "sable" }),
   row("sealed", { sealed: "x", text: null }),
@@ -48,12 +48,20 @@ describe("reencryptMine (GRYT-1969)", () => {
 
   it("moves only your plain text, sends and keeps it before removing, and keeps its date", async () => {
     const h = harness();
-    assert.equal(await reencryptMine(h.deps, "kari"), 3);
-    assert.deepEqual([...h.removed].sort(), ["a", "b", "c"]);
+    assert.equal(await reencryptMine(h.deps, "kari"), 4);
+    assert.deepEqual([...h.removed].sort(), ["a", "b", "c", "liked"]);
     assert.deepEqual(h.order.slice(0, 3), ["send", "keep", "remove"]);
     assert.equal(h.kept[0].sentAt, Date.parse(AT));
+    assert.deepEqual(h.kept.find((e) => e.id === reencryptedId("liked"))?.reactions, [{ emoji: "👍", users: ["sable"] }]);
     assert.equal(h.kept.find((e) => e.id === reencryptedId("b"))?.replyTo, reencryptedId("a"));
     assert.equal(h.kept.find((e) => e.id === reencryptedId("c"))?.replyTo, "gone");
+  });
+
+  it("leaves a message alone when its reaction can't be sent", async () => {
+    const h = harness();
+    h.deps.fetchOlder = async () => ({ items: [row("odd", { reactions: [{ src: "not an emoji", users: ["sable"] }] })], hasMore: false });
+    assert.equal(await reencryptMine(h.deps, "kari"), 0);
+    assert.deepEqual(h.removed, []);
   });
 
   it("pages back through everything older", async () => {

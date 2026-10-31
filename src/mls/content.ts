@@ -13,6 +13,14 @@ export interface MlsHistoryEntry {
   text: string;
   replyTo?: string;
   attachments?: Record<string, SealedAttachmentKey>;
+  /** Who reacted, as the sender's record has it. A claim, like the rest of a shared copy. */
+  reactions?: MlsHistoryReaction[];
+}
+
+export interface MlsHistoryReaction {
+  /** A Unicode emoji or `:name:`, what `chat:react` carries. */
+  emoji: string;
+  users: string[];
 }
 
 /** One message from the sender's own Discord data. Who wrote it is never in here: the reader takes the MLS sender. */
@@ -78,6 +86,8 @@ const isText = (v: unknown): v is string => typeof v === "string" && v.length <=
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isLabel = (v: unknown): v is string => typeof v === "string" && v.length <= MAX_LABEL;
 const MAX_HISTORY_ENTRIES = 200;
+const MAX_HISTORY_REACTIONS = 20;
+const MAX_REACTION_USERS = 50;
 /** Under what one `mls:send` takes once sealed and padded. */
 export const MAX_HISTORY_BATCH_BYTES = 48 * 1024;
 
@@ -160,6 +170,7 @@ function historyBody(e: MlsHistoryEntry): Record<string, unknown> {
   const out: Record<string, unknown> = { id: e.id, senderId: e.senderId, sentAt: e.sentAt, text: e.text };
   if (e.replyTo !== undefined) out.replyTo = e.replyTo;
   if (e.attachments && Object.keys(e.attachments).length > 0) out.attachments = e.attachments;
+  if (e.reactions?.length) out.reactions = e.reactions;
   return out;
 }
 
@@ -230,6 +241,22 @@ function readHistoryEntry(v: unknown): MlsHistoryEntry | null {
     const attachments = readAttachments(v.attachments);
     if (!attachments) return null;
     out.attachments = attachments;
+  }
+  if (v.reactions !== undefined) {
+    const reactions = readHistoryReactions(v.reactions);
+    if (!reactions) return null;
+    out.reactions = reactions;
+  }
+  return out;
+}
+
+function readHistoryReactions(v: unknown): MlsHistoryReaction[] | null {
+  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_HISTORY_REACTIONS) return null;
+  const out: MlsHistoryReaction[] = [];
+  for (const r of v) {
+    if (!isObject(r) || !isReactionEmoji(r.emoji) || !Array.isArray(r.users)) return null;
+    if (r.users.length === 0 || r.users.length > MAX_REACTION_USERS || !r.users.every(isId)) return null;
+    out.push({ emoji: r.emoji, users: r.users as string[] });
   }
   return out;
 }

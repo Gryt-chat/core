@@ -18,7 +18,7 @@ export interface ReencryptCandidate {
   sealed?: string | null;
   mls_placeholder?: object | null;
   attachments?: readonly string[] | null;
-  reactions?: readonly object[] | null;
+  reactions?: readonly { src: string; users?: readonly string[] }[] | null;
   poll?: object | null;
   pinned_at?: string | Date | null;
   thread_id?: string | null;
@@ -37,10 +37,11 @@ export interface ReencryptDeps {
   report: (done: number, total: number) => void;
 }
 
-/** Plain text only: files, reactions, polls and pins can't travel in a history entry, so they stay. */
+/* Files stay: an MLS file is deleted after the server's retention, a plaintext one isn't.
+   Polls and pins live on the server's row. */
 function canMove(m: ReencryptCandidate, me: string): boolean {
   return m.sender_server_id === me && !!m.text && !m.mls && !m.sealed && !m.mls_placeholder
-    && !m.attachments?.length && !m.reactions?.length && !m.poll && !m.pinned_at && !m.thread_id;
+    && !m.attachments?.length && !m.poll && !m.pinned_at && !m.thread_id;
 }
 
 async function plaintextOfMine(deps: ReencryptDeps, me: string): Promise<ReencryptCandidate[]> {
@@ -65,12 +66,14 @@ export async function reencryptMine(deps: ReencryptDeps, me: string): Promise<nu
   const originals = new Map(mine.map((m) => [reencryptedId(m.message_id), m.message_id]));
   const entries: MlsHistoryEntry[] = mine.map((m) => {
     const reply = m.reply_to_message_id;
+    const reactions = (m.reactions ?? []).flatMap((r) => (r.users?.length ? [{ emoji: r.src, users: [...r.users] }] : []));
     return {
       id: reencryptedId(m.message_id),
       senderId: me,
       sentAt: new Date(m.created_at).getTime(),
       text: m.text ?? "",
       ...(reply ? { replyTo: ids.has(reply) ? reencryptedId(reply) : reply } : {}),
+      ...(reactions.length ? { reactions } : {}),
     };
   });
   const batches = historyBatches(entries, deps.newId);
