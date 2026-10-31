@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { MlsDmContent } from "../mls/content.ts";
+import { decodeMlsDmContent, encodeMlsDmContent, type MlsDmContent, readImportBundle } from "../mls/content.ts";
 import { type ImportDeps, importId, type ImportFile, retryAfterMs, runDiscordImport } from "./discordImportJob.ts";
 
 const key = { id: "k", key: Buffer.alloc(32).toString("base64url"), iv: Buffer.alloc(12).toString("base64url") };
@@ -174,6 +174,49 @@ describe("the Discord import job (GRYT-1965)", () => {
     assert.deepEqual(Object.keys(entries.find((e) => e.text === "ok")?.attachments ?? {}), ["up"]);
     assert.match(entries.find((e) => e.text.startsWith("big"))?.text ?? "", /too big for this server/);
     assert.equal(h.stored.size, 0, "nothing is left in the store");
+  });
+
+  it("sends a big import's text as one bundle, and falls back to batches if it won't go up", async () => {
+    const messages = Array.from({ length: 450 }, (_, i) => ({ discordId: String(i), sentAt: 1_500_000_000_000 + i, text: `m${i}`, attachments: [] }));
+    const control = { paused: () => false, stopped: () => false };
+    const all: MlsDmContent[] = [];
+    let bytes = new Uint8Array();
+    const h = deps();
+    const done = await runDiscordImport(messages, {
+      ...h.deps,
+      bundles: true,
+      send: async (c: MlsDmContent) => void all.push(c),
+      upload: async (f: ImportFile) => { bytes = f.bytes; return { id: "up", key }; },
+    }, control, () => {});
+    assert.equal(done.messages.done, 450);
+    assert.deepEqual(all.map((c) => c.type), ["import_bundle"]);
+    const entries = readImportBundle(bytes);
+    assert.equal(entries?.length, 450);
+    assert.equal(entries?.[3].id, importId("3"));
+    assert.equal(encodeMlsDmContent(all[0]).length > 0, true);
+    assert.deepEqual(decodeMlsDmContent(encodeMlsDmContent(all[0])), all[0]);
+
+    const fallback: MlsDmContent[] = [];
+    await runDiscordImport(messages, {
+      ...deps().deps,
+      bundles: true,
+      send: async (c: MlsDmContent) => void fallback.push(c),
+      upload: async () => ({ tooLarge: true as const }),
+    }, control, () => {});
+    assert.ok(fallback.length > 1 && fallback.every((c) => c.type === "import"));
+
+    const small: MlsDmContent[] = [];
+    await runDiscordImport(messages.slice(0, 20), { ...deps().deps, bundles: true, send: async (c: MlsDmContent) => void small.push(c) }, control, () => {});
+    assert.deepEqual(small.map((c) => c.type), ["import"]);
+  });
+
+  it("refuses a bundle with a bad entry, or a bundle message without exactly one file", () => {
+    assert.equal(readImportBundle(new TextEncoder().encode(JSON.stringify({ v: 1, entries: [{ id: "a" }] }))), null);
+    assert.equal(readImportBundle(new TextEncoder().encode("nope")), null);
+    const raw = (attachments: object) => new TextEncoder().encode(JSON.stringify({ v: 1, type: "import_bundle", id: "b", source: "discord", attachments }));
+    assert.equal(decodeMlsDmContent(raw({})), null);
+    assert.equal(decodeMlsDmContent(raw({ a: key, c: key })), null);
+    assert.equal(decodeMlsDmContent(raw({ a: key }))?.type, "import_bundle");
   });
 
   it("reads Retry-After in seconds, and falls back when it can't", () => {

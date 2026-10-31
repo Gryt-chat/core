@@ -40,6 +40,14 @@ export type MlsDmContent =
       entries: MlsImportEntry[];
     }
   | {
+      /** An import too big for messages: its entries sit in one sealed upload, read with `readImportBundle`. */
+      type: "import_bundle";
+      id: string;
+      source: "discord";
+      /** Upload id to its key. Exactly one. */
+      attachments: Record<string, SealedAttachmentKey>;
+    }
+  | {
       type: "history";
       /** For the batch itself, so a repeat is the same message. */
       id: string;
@@ -146,7 +154,9 @@ function readAttachments(v: unknown): Record<string, SealedAttachmentKey> | null
 /** The same bytes the phone writes: `v` first, then the content's fields in this order. */
 export function encodeMlsDmContent(content: MlsDmContent): Uint8Array {
   let body: Record<string, unknown>;
-  if (content.type === "history") {
+  if (content.type === "import_bundle") {
+    body = { type: content.type, id: content.id, source: content.source, attachments: content.attachments };
+  } else if (content.type === "history") {
     body = { type: content.type, id: content.id, entries: content.entries.map(historyBody) };
   } else if (content.type === "import") {
     body = { type: content.type, id: content.id, source: content.source, entries: content.entries.map(importBody) };
@@ -272,6 +282,18 @@ function readImportEntry(v: unknown): MlsImportEntry | null {
   return out;
 }
 
+export function encodeImportBundle(entries: MlsImportEntry[]): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify({ v: MLS_DM_CONTENT_VERSION, entries: entries.map(importBody) }));
+}
+
+/** A bundle's entries, or null for junk. A peer wrote it, so each entry is checked like a message's. */
+export function readImportBundle(bytes: Uint8Array): MlsImportEntry[] | null {
+  const raw = parse(bytes);
+  if (!isObject(raw) || raw.v !== MLS_DM_CONTENT_VERSION || !Array.isArray(raw.entries)) return null;
+  const entries = raw.entries.map(readImportEntry);
+  return entries.every((e): e is MlsImportEntry => e !== null) ? entries : null;
+}
+
 /** Null for anything this version can't read: a newer version, a new type, or junk. */
 export function decodeMlsDmContent(bytes: Uint8Array): MlsDmContent | null {
   return fromRaw(parse(bytes));
@@ -286,7 +308,7 @@ export function readMlsDmContent(bytes: Uint8Array): MlsDmContent | "newer" | nu
   return fromRaw(raw) ?? (isNewer(raw) ? "newer" : null);
 }
 
-const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction", "history", "import"]);
+const KNOWN_TYPES: ReadonlySet<string> = new Set(["message", "edit", "delete", "reaction", "history", "import", "import_bundle"]);
 const TYPE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
 
 /** A later version, or a type this one doesn't know that names its message the way ours do. */
@@ -317,6 +339,10 @@ function fromRaw(raw: unknown): MlsDmContent | null {
     if (raw.source !== "discord" || !Array.isArray(raw.entries) || raw.entries.length === 0 || raw.entries.length > MAX_HISTORY_ENTRIES) return null;
     const entries = raw.entries.map(readImportEntry);
     return entries.every((e): e is MlsImportEntry => e !== null) ? { type, id, source: raw.source, entries } : null;
+  }
+  if (type === "import_bundle") {
+    const attachments = raw.source === "discord" ? readAttachments(raw.attachments) : null;
+    return attachments && Object.keys(attachments).length === 1 ? { type, id, source: "discord", attachments } : null;
   }
   if (type === "message" && isText(text)) {
     const out: Extract<MlsDmContent, { type: "message" }> = { type, id, text };

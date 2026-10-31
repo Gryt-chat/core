@@ -1,6 +1,6 @@
 import type { SealedAttachmentKey } from "@gryt/crypto";
 
-import { importBatches } from "../mls/content.ts";
+import { encodeImportBundle, importBatches } from "../mls/content.ts";
 import type { MlsDmContent, MlsImportEntry } from "../mls/content.js";
 import type { DiscordPackageMessage } from "./discordPackage.js";
 
@@ -30,6 +30,8 @@ export interface ImportDeps {
   newId: () => string;
   /** Downloads and uploads running together. A phone holding each file in memory wants fewer. */
   transfersAtOnce?: number;
+  /** Send a big import's text as one sealed upload. Only for apps that read `import_bundle`. */
+  bundles?: boolean;
 }
 
 export interface ImportProgress {
@@ -52,6 +54,8 @@ const TRANSFERS_AT_ONCE = 16;
 /** `mls:send` allows about one send every two seconds sustained (RL_SEND in the server). */
 const SEND_GAP_MS = 2_000;
 const FILE_BATCH = 20;
+/* A batch holds up to 200, and one send is the point where a bundle starts saving time. */
+const BUNDLE_ABOVE = 200;
 const DOWNLOAD_RETRIES = 5;
 /* A server allows 30 uploads a minute with a ban after, so a big import waits many times over. */
 const UPLOAD_RETRIES = 200;
@@ -97,6 +101,28 @@ export async function runDiscordImport(
   const hold = async () => {
     while (control.paused() && !control.stopped()) await deps.sleep(500);
   };
+  let uploadClearAt = 0;
+  const uploadFile = async (file: ImportFile) => {
+    for (let attempt = 0; attempt <= UPLOAD_RETRIES && !control.stopped(); attempt++) {
+      const wait = uploadClearAt - Date.now();
+      if (wait > 0) await deps.sleep(wait);
+      const got = await deps.upload(file);
+      if (!("retryAfterMs" in got)) return got;
+      uploadClearAt = Math.max(uploadClearAt, Date.now() + Math.min(got.retryAfterMs, MAX_RATE_LIMIT_WAIT_MS));
+    }
+    if (control.stopped()) return null;
+    throw new Error("The server kept refusing uploads.");
+  };
+  /* False when the bundle can't go up, so the batches carry it. */
+  const sendBundle = async (entries: MlsImportEntry[]) => {
+    await hold();
+    const up = await uploadFile({ name: "discord-import.json", type: "application/json", bytes: encodeImportBundle(entries) });
+    if (!up || "tooLarge" in up) return false;
+    await deps.send({ type: "import_bundle", id: deps.newId(), source: "discord", attachments: { [up.id]: up.key } });
+    p.messages.done += entries.length;
+    tick();
+    return true;
+  };
   const sendAll = async (entries: MlsImportEntry[]) => {
     for (const batch of importBatches(entries, deps.newId)) {
       await hold();
@@ -108,7 +134,8 @@ export async function runDiscordImport(
     }
   };
 
-  await sendAll(messages.filter((m) => m.attachments.length === 0).map((m) => ({ id: importId(m.discordId), sentAt: m.sentAt, text: m.text })));
+  const textOnly = messages.filter((m) => m.attachments.length === 0).map((m) => ({ id: importId(m.discordId), sentAt: m.sentAt, text: m.text }));
+  if (!(deps.bundles && textOnly.length > BUNDLE_ABOVE && !control.stopped() && (await sendBundle(textOnly)))) await sendAll(textOnly);
 
   const missing = new Set<string>();
   let clearAt = 0;
@@ -150,18 +177,6 @@ export async function runDiscordImport(
 
   const uploaded = new Map<string, { id: string; key: SealedAttachmentKey }>();
   const tooLarge = new Set<string>();
-  let uploadClearAt = 0;
-  const uploadFile = async (file: ImportFile) => {
-    for (let attempt = 0; attempt <= UPLOAD_RETRIES && !control.stopped(); attempt++) {
-      const wait = uploadClearAt - Date.now();
-      if (wait > 0) await deps.sleep(wait);
-      const got = await deps.upload(file);
-      if (!("retryAfterMs" in got)) return got;
-      uploadClearAt = Math.max(uploadClearAt, Date.now() + Math.min(got.retryAfterMs, MAX_RATE_LIMIT_WAIT_MS));
-    }
-    if (control.stopped()) return null;
-    throw new Error("The server kept refusing uploads.");
-  };
   await eachAtOnce(async (url) => {
     const stored = missing.has(url) ? null : await deps.store.take(url);
     if (stored) {
