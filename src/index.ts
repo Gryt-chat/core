@@ -99,6 +99,8 @@ export { mlsPinsFromPeerPins } from "./mls/pins.js";
 export { reencryptedId, reencryptMine, type ReencryptCandidate, type ReencryptDeps } from "./mls/reencrypt.js";
 export {
   decodeMlsDmContent,
+  encodeImportBundle,
+  readImportBundle,
   encodeMlsDmContent,
   acceptImport,
   historyBatches,
