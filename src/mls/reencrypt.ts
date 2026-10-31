@@ -15,11 +15,11 @@ export interface ReencryptCandidate {
   reply_to_message_id?: string | null;
   mls?: boolean;
   sealed?: string | null;
-  mls_placeholder?: unknown;
-  attachments?: unknown[] | null;
-  reactions?: unknown[] | null;
-  poll?: unknown;
-  pinned_at?: unknown;
+  mls_placeholder?: object | null;
+  attachments?: readonly string[] | null;
+  reactions?: readonly object[] | null;
+  poll?: object | null;
+  pinned_at?: string | Date | null;
   thread_id?: string | null;
 }
 
