@@ -16,6 +16,7 @@ import {
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.js";
 import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
 import { createHistorySender, createTailRecorder, type HistoryMessage } from "./historySender.ts";
+import type { HistoryChunkStore, HistoryStoreChooser } from "./historyStore.js";
 import type {
   HistoryArchive,
   HistoryNotedMessage,
@@ -64,6 +65,8 @@ export interface ApproverOptions {
   approvalMs?: number;
   /** A's archive. Without it, no history goes across. */
   history?: HistoryArchive;
+  /** Picks the server that holds the history. Without one, the history stays on A. */
+  historyStore?: HistoryStoreChooser;
   /** How long after the adds A keeps collecting old-epoch messages for the last tail. */
   lateWindowMs?: number;
 }
@@ -73,6 +76,8 @@ export interface ApproverPairing {
   subscribe(listener: (state: ApproverState) => void): () => void;
   /** Null until Approve, or with no archive. */
   readonly history: HistoryProgress | null;
+  /** True once Approve found no server to hold the history, so it stays on A. */
+  readonly historyLeftBehind: boolean;
   subscribeHistory(listener: (progress: HistoryProgress) => void): () => void;
   /** Every MLS message A archives while this runs, received or sent, for the tail. */
   noteMessage(message: HistoryNotedMessage): void;
@@ -115,6 +120,7 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
   let confirming: AbortController | null = null;
   let deadline = 0;
   let history: HistoryProgress | null = null;
+  let historyLeftBehind = false;
   const historyListeners = new Set<(progress: HistoryProgress) => void>();
   const tail = createTailRecorder();
   const setHistory = (progress: HistoryProgress) => {
@@ -263,10 +269,10 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     return snap;
   }
 
-  function startHistory(archive: HistoryArchive) {
+  function startHistory(archive: HistoryArchive, store: HistoryChunkStore) {
     const { id, token, session } = confirmed();
     return createHistorySender({
-      relay, id, token, archive, clock, signal: abort.signal,
+      store, archive, clock, signal: abort.signal,
       post: (message: HistoryMessage) =>
         relay.post(id, token, { type: "sealed", body: sealJson(session, message) }),
       onProgress: setHistory,
@@ -279,13 +285,16 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     let sender: ReturnType<typeof createHistorySender> | null = null;
     let snap = new Map<string, Map<string, number>>();
     let sealed = envelope;
-    if (options.history) {
+    const held = options.history && options.historyStore ? await options.historyStore(envelope.servers).catch(() => null) : null;
+    if (options.history && held) {
       // Recording starts before the positions are read, so nothing lands between the two unseen.
       tail.start();
       snap = await positions(envelope);
-      sender = startHistory(options.history);
+      sender = startHistory(options.history, held.store);
       const chunks = await sender.forEnvelope(Math.min(clock.now() + ENVELOPE_BUDGET_MS, deadline - 10_000));
-      sealed = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks } } };
+      sealed = { ...envelope, history: { key: sender.key, manifest: { v: 1, chunks }, host: held.host, transfer: held.transfer } };
+    } else if (options.history && envelope.servers.length > 0) {
+      historyLeftBehind = true;
     }
     await relay.post(id, token, { type: "sealed", body: base64Url(session.seal(encodePairingEnvelope(sealed))) });
 
@@ -332,6 +341,9 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
     },
     get history() {
       return history;
+    },
+    get historyLeftBehind() {
+      return historyLeftBehind;
     },
     subscribeHistory(listener) {
       historyListeners.add(listener);

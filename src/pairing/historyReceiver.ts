@@ -3,14 +3,13 @@ import { openHistoryChunk, parseHistoryChunkEntry, type HistoryChunkEntry, type 
 import { PairingEnded } from "./channel.ts";
 import { emptyProgress, type ListedChunk } from "./historySender.ts";
 import type { HistoryProgress, HistorySink, PairingClock } from "./interfaces.js";
-import { PairingRelayError, type PairingRelay } from "./relayClient.ts";
+import type { HistoryChunkStore } from "./historyStore.js";
+import { HistoryStoreError } from "./historyStore.ts";
 
 const MAX_NETWORK_RETRIES = 5;
 
 export interface HistoryReceiverOptions {
-  relay: PairingRelay;
-  id: string;
-  token: string;
+  store: HistoryChunkStore;
   key: Uint8Array;
   sink: HistorySink;
   clock: PairingClock;
@@ -22,7 +21,7 @@ const messageKey = (r: HistoryRecord) => JSON.stringify([r.scope, r.conversation
 
 /** N: fetches each listed chunk newest first, checks it against its entry, and stores each message once. */
 export function createHistoryReceiver(options: HistoryReceiverOptions) {
-  const { relay, id, token, key, sink, clock, signal } = options;
+  const { store, key, sink, clock, signal } = options;
   const progress = emptyProgress();
   const pending = new Map<number, HistoryChunkEntry>();
   const slots = new Set<number>();
@@ -50,14 +49,13 @@ export function createHistoryReceiver(options: HistoryReceiverOptions) {
     progress.listed++;
   }
 
-  async function fetchChunk(n: number): Promise<Uint8Array | "missing" | "gone"> {
+  async function fetchChunk(n: number): Promise<Uint8Array | "missing"> {
     for (let failures = 0; ; ) {
       try {
-        return await relay.getChunk(id, token, n, signal);
+        return await store.get(n, signal);
       } catch (e) {
-        if (e instanceof PairingRelayError && e.status === 404) return "missing";
-        if (e instanceof PairingRelayError && e.status === 410) return "gone";
-        if (!(e instanceof PairingRelayError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
+        if (e instanceof HistoryStoreError && e.code === "missing") return "missing";
+        if (!(e instanceof HistoryStoreError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
         await clock.sleep(2000, signal);
       }
     }
@@ -89,7 +87,6 @@ export function createHistoryReceiver(options: HistoryReceiverOptions) {
       }
       const [n, entry] = item;
       const sealed = await fetchChunk(n);
-      if (sealed === "gone") return abandon();
       pending.delete(n);
       if (sealed === "missing") {
         progress.missing++;
@@ -111,7 +108,7 @@ export function createHistoryReceiver(options: HistoryReceiverOptions) {
       progress.messages += fresh.length;
       progress.oldest = Math.min(progress.oldest ?? entry.first, entry.first);
       report();
-      relay.deleteChunk(id, token, n).catch(() => undefined);
+      store.delete(n).catch(() => undefined);
     }
   }
 

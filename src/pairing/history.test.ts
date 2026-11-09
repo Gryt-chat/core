@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { asIdentityScope, base64Url, base64UrlDecode, type HistoryRecord, type PairingEnvelope } from "@gryt/crypto";
+import { asIdentityScope, type HistoryRecord, type PairingEnvelope } from "@gryt/crypto";
 
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.ts";
 import { createApproverPairing, type ApproverPairing } from "./approver.ts";
@@ -9,7 +9,32 @@ import { archiveByDay } from "./historySnapshot.ts";
 import type { HistoryArchive, HistoryProgress } from "./interfaces.ts";
 import { createNewDevicePairing, type NewDevicePairing } from "./newDevice.ts";
 import { FakeClock, FakeKeycloak, FakeRelay } from "./relay.fake.ts";
+import { HistoryStoreError, type HistoryChunkStore } from "./historyStore.ts";
 import { createPairingRelay } from "./relayClient.ts";
+
+const TRANSFER = "T".repeat(26);
+
+/** One of the user's servers holding the chunks, with a hook to damage or drop one. */
+class FakeHistoryServer {
+  chunks = new Map<number, Uint8Array>();
+  bytes = 0;
+  serveChunk: ((n: number, body: Uint8Array) => Uint8Array | null) | null = null;
+  store(): HistoryChunkStore {
+    return {
+      put: async (n, sealed) => {
+        this.chunks.set(n, sealed);
+        this.bytes += sealed.length;
+      },
+      get: async (n) => {
+        const stored = this.chunks.get(n);
+        const served = stored && (this.serveChunk ? this.serveChunk(n, stored) : stored);
+        if (!served) throw new HistoryStoreError("missing");
+        return served;
+      },
+      delete: async (n) => void this.chunks.delete(n),
+    };
+  }
+}
 
 const HOST = "chat.example";
 const DAY = 24 * 60 * 60 * 1000;
@@ -71,9 +96,10 @@ interface Mls {
   duringAdd?: () => void;
 }
 
-function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, epoch: 1 } }, withSink = true) {
+function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, epoch: 1 } }, withSink = true, withServer = true) {
   const clock = new FakeClock();
   const relay = new FakeRelay(clock);
+  const server = new FakeHistoryServer();
   const keycloak = new FakeKeycloak();
   const archive = new FakeArchive(records);
   const sink: HistoryRecord[] = [];
@@ -87,6 +113,7 @@ function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, ep
       oidc: keycloak.oidc,
       clock,
       history: withSink ? { put: async (batch) => void (sink.push(...batch), puts.push(batch)) } : undefined,
+      historyStore: () => server.store(),
     });
   const approver = () =>
     createApproverPairing({
@@ -95,6 +122,7 @@ function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, ep
       fetch: keycloak.fetch,
       clock,
       history: archive,
+      historyStore: async (servers) => (withServer ? { host: servers[0].host, transfer: TRANSFER, store: server.store() } : null),
       lateWindowMs: 5000,
       devices: () => ({
         groupPositions: async () => [{ conversationId: "dm-1", groupId: "ab", seq: mls.snap, epoch: 2 }],
@@ -138,7 +166,7 @@ function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, ep
     return { n, a };
   }
 
-  return { clock, relay, archive, sink, puts, pair, until };
+  return { clock, relay, server, archive, sink, puts, pair, until };
 }
 
 const phase = (p: NewDevicePairing | ApproverPairing) => p.state.phase;
@@ -159,6 +187,17 @@ describe("archiveByDay", () => {
 });
 
 describe("history transfer", () => {
+  it("leaves the history on A, and says so on both sides, when no server will hold it", async () => {
+    const env = setup(bigArchive(), undefined, true, false);
+    const { n, a } = await env.pair();
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
+    assert.equal(a.historyLeftBehind, true);
+    assert.equal(n.historyLeftBehind, true);
+    assert.equal(env.sink.length, 0);
+    assert.equal(env.relay.chunkBytes, 0, "and nothing fell back to the relay");
+    assert.equal(env.server.bytes, 0);
+  });
+
   it("moves 5,000 messages in three conversations, newest first", async () => {
     const records = bigArchive();
     const env = setup(records);
@@ -182,19 +221,21 @@ describe("history transfer", () => {
     }
     assert.ok(progressOf(n).listed > 400, "some chunks came after the envelope");
     assert.equal(progressOf(n).missing, 0);
+    assert.equal(env.relay.chunkBytes, 0, "no chunk went through the relay");
+    assert.ok(env.server.bytes > 0, "the server held them");
     assert.equal(env.relay.sessions.size, 0, "N closed the session");
   });
 
-  it("refuses a chunk the relay changed and keeps the rest", async () => {
+  it("refuses a chunk the server changed and keeps the rest", async () => {
     const records = bigArchive();
     const env = setup(records);
     let changed = 0;
-    env.relay.serveChunk = (slot, body) => {
+    env.server.serveChunk = (slot, body) => {
       if (slot !== 3) return body;
       changed++;
-      const bytes = base64UrlDecode(body);
+      const bytes = Uint8Array.from(body);
       bytes[bytes.length - 1] ^= 1;
-      return base64Url(bytes);
+      return bytes;
     };
     const { n, a } = await env.pair();
     await env.until(() => phase(a) === "done" && phase(n) === "done");
@@ -206,10 +247,10 @@ describe("history transfer", () => {
     assert.equal(new Set(env.sink.map(key)).size, env.sink.length);
   });
 
-  it("reports a chunk the relay lost", async () => {
+  it("reports a chunk the server lost", async () => {
     const records = bigArchive();
     const env = setup(records);
-    env.relay.serveChunk = (slot, body) => (slot === 5 ? null : body);
+    env.server.serveChunk = (slot, body) => (slot === 5 ? null : body);
     const { n, a } = await env.pair();
     await env.until(() => phase(a) === "done" && phase(n) === "done");
     const p = progressOf(n);

@@ -19,6 +19,7 @@ import { randomBytes } from "@noble/hashes/utils.js";
 
 import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
 import { createHistoryReceiver } from "./historyReceiver.ts";
+import type { HistoryStoreOpener } from "./historyStore.js";
 import type {
   HistoryProgress,
   HistorySink,
@@ -54,8 +55,10 @@ export interface NewDeviceOptions {
   /** Only for a server with its own auth server: goes in the QR for A to check against its own. */
   relayOrigin?: string;
   approvalMs?: number;
-  /** N's archive. Without it, history A sends is left on the relay. */
+  /** N's archive. Without it, history A sends is left where A put it. */
   history?: HistorySink;
+  /** Opens the server the envelope names for the history. Without it, no history comes across. */
+  historyStore?: HistoryStoreOpener;
 }
 
 export interface NewDevicePairing {
@@ -63,6 +66,8 @@ export interface NewDevicePairing {
   subscribe(listener: (state: NewDeviceState) => void): () => void;
   /** Null until the envelope brings a history key, or with no sink. */
   readonly history: HistoryProgress | null;
+  /** True when A had servers but sent no history, so the old messages stay on A. */
+  readonly historyLeftBehind: boolean;
   subscribeHistory(listener: (progress: HistoryProgress) => void): () => void;
   start(): void;
   /** In `joining`: N's device on each server, once its KeyPackages are up. */
@@ -88,6 +93,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
   let current: { id: string; token: string; box: ReturnType<typeof mailbox>; session?: PairingSession } | null = null;
   let receiver: ReturnType<typeof createHistoryReceiver> | null = null;
   let history: HistoryProgress | null = null;
+  let historyLeftBehind = false;
   const historyListeners = new Set<(progress: HistoryProgress) => void>();
   const setHistory = (progress: HistoryProgress) => {
     history = progress;
@@ -222,12 +228,16 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       const envelope = outcome;
       const tokens = envelope.account ? await signIn(envelope.account, envelope.from) : null;
       await storage.commit(envelope, tokens);
-      if (envelope.history && options.history) {
-        const { id, token } = paired();
+      const held = envelope.history;
+      // History only ever comes from a server the envelope names; an older A's relay copy is left there.
+      if (held?.host && held.transfer && options.history && options.historyStore) {
         receiver = createHistoryReceiver({
-          relay, id, token, key: envelope.history.key, sink: options.history, clock, signal: abort.signal, onProgress: setHistory,
+          store: options.historyStore(held.host, held.transfer),
+          key: held.key, sink: options.history, clock, signal: abort.signal, onProgress: setHistory,
         });
-        receiver.listManifest(envelope.history.manifest.chunks);
+        receiver.listManifest(held.manifest.chunks);
+      } else if (envelope.servers.length > 0) {
+        historyLeftBehind = true;
       }
       set({ phase: "joining", servers: envelope.servers, from: envelope.from });
     } catch (e) {
@@ -278,6 +288,9 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     },
     get history() {
       return history;
+    },
+    get historyLeftBehind() {
+      return historyLeftBehind;
     },
     subscribeHistory(listener) {
       historyListeners.add(listener);
