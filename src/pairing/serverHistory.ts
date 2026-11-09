@@ -1,7 +1,7 @@
 import { base64Url } from "@gryt/crypto";
 import { randomBytes } from "@noble/hashes/utils.js";
 
-import type { HistoryChunkStore, HistoryStoreChooser, HistoryStoreOpener } from "./historyStore.js";
+import type { HistoryChunkStore, HistoryStoreChooser, HistoryStoreError as StoreError, HistoryStoreOpener } from "./historyStore.js";
 import { HistoryStoreError } from "./historyStore.ts";
 import { systemClock } from "./channel.ts";
 import type { PairingClock } from "./interfaces.js";
@@ -23,7 +23,7 @@ export interface ServerAccess {
 /** The new device only gets a token once it has joined, which can trail the envelope. */
 const TOKEN_WAIT_MS = 90_000;
 
-export function historyStoreError(status: number): HistoryStoreError {
+export function historyStoreError(status: number): StoreError {
   if (status === 404) return new HistoryStoreError("missing");
   if (status === 413 || status === 429) return new HistoryStoreError("full");
   // A stale token gets refreshed by the connection, and a server error may pass: both are worth another try.
