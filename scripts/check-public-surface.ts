@@ -97,6 +97,12 @@ const REQUIRED = [
   "createPairingRelay",
   "PAIRING_APPROVAL_MS",
   "PairingRelayError",
+  // linked history on the user's own server (GRYT-2055)
+  "chooseHistoryServer",
+  "HistoryStoreError",
+  "historyStoreError",
+  "openServerHistory",
+  "serverHistoryStore",
 ];
 
 // Types are erased at runtime, so they are checked against the .d.ts instead.
