@@ -9,7 +9,8 @@ import {
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.js";
 import { archiveByDay } from "./historySnapshot.ts";
 import type { HistoryArchive, HistoryNotedMessage, HistoryProgress, PairingClock } from "./interfaces.js";
-import { HistoryStoreError, type HistoryChunkStore } from "./historyStore.ts";
+import type { HistoryChunkStore } from "./historyStore.js";
+import { HistoryStoreError } from "./historyStore.ts";
 
 /** The server's 256 MiB per user, less room for the tail. */
 export const HISTORY_SNAPSHOT_MAX_BYTES = 248 * 1024 * 1024;

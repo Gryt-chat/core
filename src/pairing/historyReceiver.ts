@@ -3,7 +3,8 @@ import { openHistoryChunk, parseHistoryChunkEntry, type HistoryChunkEntry, type 
 import { PairingEnded } from "./channel.ts";
 import { emptyProgress, type ListedChunk } from "./historySender.ts";
 import type { HistoryProgress, HistorySink, PairingClock } from "./interfaces.js";
-import { HistoryStoreError, type HistoryChunkStore } from "./historyStore.ts";
+import type { HistoryChunkStore } from "./historyStore.js";
+import { HistoryStoreError } from "./historyStore.ts";
 
 const MAX_NETWORK_RETRIES = 5;
 
