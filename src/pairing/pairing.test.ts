@@ -366,6 +366,17 @@ describe("timeouts, cancelling and a second scan", () => {
     assert.deepEqual(a.state, { phase: "ended", reason: "cancelled_by_other" });
   });
 
+  it("ends N without losing what it kept when A closes after Approve", async () => {
+    const env = setup();
+    const { n, a } = await toEmoji(env);
+    a.approve(envelope());
+    await env.until(() => phase(n) === "joining");
+    await a.cancel();
+    await assert.rejects(n.ready([{ host: "chat.example", deviceId: "dev-n" }]));
+    assert.deepEqual(n.state, { phase: "ended", reason: "cancelled_by_other" });
+    assert.equal(env.committed.length, 1, "the seed and servers it already took stay");
+  });
+
   it("tells N when A denies", async () => {
     const env = setup();
     const { n, a } = await toEmoji(env);

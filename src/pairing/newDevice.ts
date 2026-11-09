@@ -291,7 +291,13 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       if (state.phase !== "joining" || !current?.session) throw new Error("Not waiting to join.");
       const { from } = state;
       const body = sealJson(current.session, { t: "ready", devices: devices.map(({ host, deviceId }) => ({ host, deviceId })) });
-      await relay.post(current.id, current.token, { type: "sealed", body });
+      try {
+        await relay.post(current.id, current.token, { type: "sealed", body });
+      } catch (e) {
+        // A closed before N got here: say so, rather than sit on "joining" with nothing listening.
+        await end(reasonFor(e));
+        throw e;
+      }
       set({ phase: "linked", from });
       void linked(from);
     },
