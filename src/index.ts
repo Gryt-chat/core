@@ -178,6 +178,12 @@ export {
   type NewDeviceState,
 } from "./pairing/newDevice.js";
 export { createPairingRelay, PairingRelayError, type PairingRelay } from "./pairing/relayClient.js";
+export {
+  HistoryStoreError,
+  type HistoryChunkStore,
+  type HistoryStoreChooser,
+  type HistoryStoreOpener,
+} from "./pairing/historyStore.js";
 export type {
   DeviceAuthorization,
   DeviceTokenPoll,

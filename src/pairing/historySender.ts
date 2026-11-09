@@ -9,9 +9,9 @@ import {
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.js";
 import { archiveByDay } from "./historySnapshot.ts";
 import type { HistoryArchive, HistoryNotedMessage, HistoryProgress, PairingClock } from "./interfaces.js";
-import { PairingRelayError, type PairingRelay } from "./relayClient.ts";
+import { HistoryStoreError, type HistoryChunkStore } from "./historyStore.ts";
 
-/** The relay's 256 MiB per session, less room for the tail. */
+/** The server's 256 MiB per user, less room for the tail. */
 export const HISTORY_SNAPSHOT_MAX_BYTES = 248 * 1024 * 1024;
 /** Entries in the envelope's manifest and in each later message, which keep under 256 and 64 KiB. */
 export const HISTORY_ENVELOPE_ENTRIES = 400;
@@ -39,9 +39,7 @@ export const emptyProgress = (): HistoryProgress => ({
 });
 
 export interface HistorySenderOptions {
-  relay: PairingRelay;
-  id: string;
-  token: string;
+  store: HistoryChunkStore;
   archive: HistoryArchive;
   clock: PairingClock;
   signal: AbortSignal;
@@ -53,7 +51,7 @@ export interface HistorySenderOptions {
 
 /** A: seals the archive into chunks newest first, uploads each, then lists it to N. */
 export function createHistorySender(options: HistorySenderOptions) {
-  const { relay, id, token, clock, signal } = options;
+  const { store, clock, signal } = options;
   const key = generateHistoryKey();
   const maxBytes = options.maxBytes ?? HISTORY_SNAPSHOT_MAX_BYTES;
   const progress = emptyProgress();
@@ -71,15 +69,15 @@ export function createHistorySender(options: HistorySenderOptions) {
   async function put(n: number, sealed: Uint8Array) {
     for (let failures = 0; ; ) {
       try {
-        return await relay.putChunk(id, token, n, sealed, signal);
+        return await store.put(n, sealed, signal);
       } catch (e) {
-        if (!(e instanceof PairingRelayError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
+        if (!(e instanceof HistoryStoreError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
         await clock.sleep(2000, signal);
       }
     }
   }
 
-  /** False once the cap or the relay says no more. */
+  /** False once the cap or the store says no more. */
   async function upload(records: HistoryRecord[], capped: boolean): Promise<boolean> {
     for (const chunk of planHistoryChunks(records)) {
       if (signal.aborted) throw new Error("History transfer cancelled.");
@@ -89,8 +87,8 @@ export function createHistorySender(options: HistorySenderOptions) {
       try {
         await put(n, sealed);
       } catch (e) {
-        // The relay's own caps: whatever didn't fit stays behind, the same as our own cap.
-        if (capped && e instanceof PairingRelayError && (e.status === 507 || e.code === "busy")) return false;
+        // The server's own caps: whatever didn't fit stays behind, the same as our own cap.
+        if (capped && e instanceof HistoryStoreError && e.code === "full") return false;
         throw e;
       }
       bytes += sealed.length;
