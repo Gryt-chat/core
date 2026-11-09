@@ -19,7 +19,7 @@ import { randomBytes } from "@noble/hashes/utils.js";
 
 import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
 import { createHistoryReceiver } from "./historyReceiver.ts";
-import type { HistoryStoreOpener } from "./historyStore.ts";
+import type { HistoryStoreOpener } from "./historyStore.js";
 import type {
   HistoryProgress,
   HistorySink,

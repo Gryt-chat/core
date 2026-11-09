@@ -16,7 +16,7 @@ import {
 import type { MlsOwnDeviceAdd } from "../mls/interfaces.js";
 import { mailbox, openJson, PairingEnded, reasonFor, sealJson, systemClock } from "./channel.ts";
 import { createHistorySender, createTailRecorder, type HistoryMessage } from "./historySender.ts";
-import type { HistoryChunkStore, HistoryStoreChooser } from "./historyStore.ts";
+import type { HistoryChunkStore, HistoryStoreChooser } from "./historyStore.js";
 import type {
   HistoryArchive,
   HistoryNotedMessage,
