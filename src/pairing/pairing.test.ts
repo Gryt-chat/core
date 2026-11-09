@@ -13,7 +13,7 @@ import { createPairingRelay } from "./relayClient.ts";
 const SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
 const SERVER = { host: "chat.example", name: "Example", scope: asIdentityScope("srv:lineage-1") };
 
-function setup(options: { mitm?: boolean } = {}) {
+function setup(options: { mitm?: boolean; devices?: Parameters<typeof createApproverPairing>[0]["devices"] } = {}) {
   const clock = new FakeClock();
   const relay = new FakeRelay(clock);
   relay.mitm = options.mitm ?? false;
@@ -35,7 +35,7 @@ function setup(options: { mitm?: boolean } = {}) {
       relayOrigin: relay.origin,
       fetch: keycloak.fetch,
       clock,
-      devices: (host) => ({
+      devices: options.devices ?? ((host) => ({
         addOwnDevice: async (deviceId, opts) => {
           adds.push({ host, deviceId });
           const result: MlsOwnDeviceAdd = { conversationId: "dm-1", groupId: "ab", outcome: "added", add: { seq: 4, epoch: 2 } };
@@ -43,7 +43,7 @@ function setup(options: { mitm?: boolean } = {}) {
           return [result];
         },
         groupPositions: async () => [],
-      }),
+      })),
     });
 
   /** Lets every promise settle, then moves the clock a second at a time until `done` holds. */
@@ -109,6 +109,37 @@ describe("pairing a guest", () => {
     await env.until(() => phase(a) === "done" && phase(n) === "done");
     assert.deepEqual(env.adds, [{ host: "chat.example", deviceId: "dev-n" }]);
     assert.equal(env.relay.sessions.size, 0);
+  });
+});
+
+describe("adding the new device", () => {
+  it("adds it on every server at once, with progress summed over them", async () => {
+    const started: string[] = [];
+    const gates = new Map<string, () => void>();
+    const env = setup({
+      devices: (host) => ({
+        addOwnDevice: async (_deviceId, opts) => {
+          started.push(host);
+          await new Promise<void>((resolve) => gates.set(host, resolve));
+          const result: MlsOwnDeviceAdd = { conversationId: `dm-${host}`, groupId: "ab", outcome: "added", add: { seq: 1, epoch: 2 } };
+          opts?.onProgress?.({ done: 1, total: 1, result });
+          return [result];
+        },
+        groupPositions: async () => [],
+      }),
+    });
+    const { n, a } = await toEmoji(env);
+    a.approve({ ...envelope(), servers: [SERVER, { ...SERVER, host: "two.example" }] });
+    await env.until(() => phase(n) === "joining");
+    await n.ready([{ host: "chat.example", deviceId: "dev-n" }, { host: "two.example", deviceId: "dev-n2" }]);
+    await env.until(() => started.length === 2);
+    assert.deepEqual(started.sort(), ["chat.example", "two.example"], "both servers start before either finishes");
+
+    gates.get("chat.example")!();
+    await env.until(() => phase(a) === "adding");
+    assert.deepEqual((a.state as { done: number; total: number }).done, 1);
+    gates.get("two.example")!();
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
   });
 });
 

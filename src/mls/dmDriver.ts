@@ -47,6 +47,7 @@ import type { MlsAddOwnDeviceOptions, MlsDmDiagnostics, MlsGroupPosition, MlsOwn
 /** Devices per person per server. Must match the server's MLS_MAX_DEVICES, or extra devices are left out quietly. */
 const MLS_MAX_DEVICES_PER_PERSON = 100;
 const COMMIT_ATTEMPTS = 5;
+const OWN_DEVICE_ADDS_AT_ONCE = 4;
 /** socket.io closes the connection on a packet with more than 10 binary parts (GRYT-1522). */
 const MAX_BINARY_PARTS = 10;
 const LOG_PAGE = MAX_BINARY_PARTS;
@@ -1092,19 +1093,27 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     const ids = (await store.listGroups()).map((r) => r.conversationId);
     const first = (options.order ?? []).filter((id) => ids.includes(id));
     const ordered = [...new Set([...first, ...ids])];
-    const results: MlsOwnDeviceAdd[] = [];
-    for (const conversationId of ordered) {
-      let result: MlsOwnDeviceAdd;
-      try {
-        result = await run(conversationId, () => addOwnDeviceTo(conversationId, deviceId, ownPersonKey));
-      } catch (e) {
-        if (e instanceof MlsDriverError && e.code === "not_own_device") throw e;
-        const groupId = (await store.loadGroup(conversationId))?.groupId ?? "";
-        result = { conversationId, groupId, outcome: "failed", add: null, error: e instanceof MlsDriverError ? e.code : "error" };
+    const results: MlsOwnDeviceAdd[] = new Array(ordered.length);
+    let done = 0;
+    let next = 0;
+    // Each group is its own commit, so a few go at once; `order` still decides which start first.
+    const worker = async () => {
+      while (next < ordered.length) {
+        const i = next++;
+        const conversationId = ordered[i];
+        let result: MlsOwnDeviceAdd;
+        try {
+          result = await run(conversationId, () => addOwnDeviceTo(conversationId, deviceId, ownPersonKey));
+        } catch (e) {
+          if (e instanceof MlsDriverError && e.code === "not_own_device") throw e;
+          const groupId = (await store.loadGroup(conversationId))?.groupId ?? "";
+          result = { conversationId, groupId, outcome: "failed", add: null, error: e instanceof MlsDriverError ? e.code : "error" };
+        }
+        results[i] = result;
+        options.onProgress?.({ done: ++done, total: ordered.length, result });
       }
-      results.push(result);
-      options.onProgress?.({ done: results.length, total: ordered.length, result });
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(OWN_DEVICE_ADDS_AT_ONCE, ordered.length) }, worker));
     return results;
   }
 

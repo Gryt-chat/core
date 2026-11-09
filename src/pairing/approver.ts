@@ -218,22 +218,38 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
 
   async function addEverywhere(ready: PairedServerDevice[]) {
     const added: Record<string, MlsOwnDeviceAdd[]> = {};
-    for (const { host, deviceId } of ready) {
-      const driver = devices(host);
-      if (!driver) continue;
-      for (let tries = 0; ; tries++) {
-        try {
-          added[host] = await driver.addOwnDevice(deviceId, {
-            onProgress: ({ done, total }) => set({ phase: "adding", device: confirmed().device, host, done, total }),
-          });
-          break;
-        } catch (e) {
-          // The server lists N's device once its KeyPackages are in, which can trail N's "ready".
-          if ((e as { code?: unknown }).code !== "not_own_device" || tries >= NOT_LISTED_RETRIES) throw e;
-          await clock.sleep(2000, abort.signal);
-        }
+    // Servers go at once, so progress is the sum over them.
+    const counts = new Map<string, { done: number; total: number }>();
+    const report = (host: string) => {
+      let done = 0;
+      let total = 0;
+      for (const c of counts.values()) {
+        done += c.done;
+        total += c.total;
       }
-    }
+      set({ phase: "adding", device: confirmed().device, host, done, total });
+    };
+    await Promise.all(
+      ready.map(async ({ host, deviceId }) => {
+        const driver = devices(host);
+        if (!driver) return;
+        for (let tries = 0; ; tries++) {
+          try {
+            added[host] = await driver.addOwnDevice(deviceId, {
+              onProgress: ({ done, total }) => {
+                counts.set(host, { done, total });
+                report(host);
+              },
+            });
+            return;
+          } catch (e) {
+            // The server lists N's device once its KeyPackages are in, which can trail N's "ready".
+            if ((e as { code?: unknown }).code !== "not_own_device" || tries >= NOT_LISTED_RETRIES) throw e;
+            await clock.sleep(2000, abort.signal);
+          }
+        }
+      }),
+    );
     return added;
   }
 
