@@ -324,7 +324,10 @@ export function createApproverPairing(options: ApproverOptions): ApproverPairing
 
     set({ phase: "sending", device, added });
     await sender.send(tail.take(snap, added), false);
-    await clock.sleep(options.lateWindowMs ?? HISTORY_LATE_WINDOW_MS, abort.signal);
+    // Late old-epoch messages can only come from a group N was just added to.
+    if (Object.values(added).some((groups) => groups.length > 0)) {
+      await clock.sleep(options.lateWindowMs ?? HISTORY_LATE_WINDOW_MS, abort.signal);
+    }
     await sender.send(tail.take(snap, added), true);
     // N closes the session once it has every chunk; closing here would delete them.
     set({ phase: "done", device, added });
