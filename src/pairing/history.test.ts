@@ -94,6 +94,8 @@ interface Mls {
   add: { seq: number; epoch: number };
   /** Runs inside addOwnDevice, before the add is reported. */
   duringAdd?: () => void;
+  /** No MLS DMs on the server, so the add touches no group. */
+  noGroups?: boolean;
 }
 
 function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, epoch: 1 } }, withSink = true, withServer = true, localScope?: (host: string) => string) {
@@ -129,6 +131,7 @@ function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, ep
         groupPositions: async () => [{ conversationId: "dm-1", groupId: "ab", seq: mls.snap, epoch: 2 }],
         addOwnDevice: async () => {
           mls.duringAdd?.();
+          if (mls.noGroups) return [];
           const result: MlsOwnDeviceAdd = { conversationId: "dm-1", groupId: "ab", outcome: "added", add: mls.add };
           return [result];
         },
@@ -195,6 +198,23 @@ describe("history transfer", () => {
     const scopes = new Set(env.sink.map((r) => r.scope));
     assert.deepEqual([...scopes].sort(), [`phone:${HOST}`, "srv:b"]);
     assert.equal(env.sink.length, 5000);
+  });
+
+  it("skips the late window when the add touched no MLS group", async () => {
+    const env = setup(bigArchive(), { snap: 0, add: { seq: 1, epoch: 1 }, noGroups: true });
+    const { n, a } = await env.pair();
+    const readyAt = env.clock.now();
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
+    assert.ok(env.clock.now() - readyAt < 5000, `done ${env.clock.now() - readyAt} ms after ready`);
+    assert.equal(env.sink.length, 5000);
+  });
+
+  it("still waits out the late window after adding to a group", async () => {
+    const env = setup(bigArchive());
+    const { n, a } = await env.pair();
+    const readyAt = env.clock.now();
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
+    assert.ok(env.clock.now() - readyAt >= 5000);
   });
 
   it("leaves the history on A, and says so on both sides, when no server will hold it", async () => {
