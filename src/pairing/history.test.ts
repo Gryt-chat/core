@@ -96,7 +96,7 @@ interface Mls {
   duringAdd?: () => void;
 }
 
-function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, epoch: 1 } }, withSink = true, withServer = true) {
+function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, epoch: 1 } }, withSink = true, withServer = true, localScope?: (host: string) => string) {
   const clock = new FakeClock();
   const relay = new FakeRelay(clock);
   const server = new FakeHistoryServer();
@@ -114,6 +114,7 @@ function setup(records: HistoryRecord[], mls: Mls = { snap: 0, add: { seq: 1, ep
       clock,
       history: withSink ? { put: async (batch) => void (sink.push(...batch), puts.push(batch)) } : undefined,
       historyStore: () => server.store(),
+      localScope,
     });
   const approver = () =>
     createApproverPairing({
@@ -187,6 +188,15 @@ describe("archiveByDay", () => {
 });
 
 describe("history transfer", () => {
+  it("refiles A's records under N's own scope for each server the envelope names", async () => {
+    const env = setup(bigArchive(), undefined, true, true, (host) => `phone:${host}`);
+    const { n, a } = await env.pair();
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
+    const scopes = new Set(env.sink.map((r) => r.scope));
+    assert.deepEqual([...scopes].sort(), [`phone:${HOST}`, "srv:b"]);
+    assert.equal(env.sink.length, 5000);
+  });
+
   it("leaves the history on A, and says so on both sides, when no server will hold it", async () => {
     const env = setup(bigArchive(), undefined, true, false);
     const { n, a } = await env.pair();
