@@ -59,6 +59,21 @@ export interface NewDeviceOptions {
   history?: HistorySink;
   /** Opens the server the envelope names for the history. Without it, no history comes across. */
   historyStore?: HistoryStoreOpener;
+  /** This device's archive scope for a server. A's records are refiled under it, since the
+      desktop files by server key and the phone by host. */
+  localScope?: (host: string) => string;
+}
+
+function refiled(sink: HistorySink, servers: PairingServer[], localScope?: (host: string) => string): HistorySink {
+  if (!localScope) return sink;
+  const hosts = new Map<string, string>(servers.map((s) => [s.scope, s.host]));
+  // Asked per batch: the desktop's scope needs the server's key, pinned only once it has joined.
+  return {
+    put: (records) => sink.put(records.map((r) => {
+      const host = hosts.get(r.scope);
+      return host === undefined ? r : { ...r, scope: localScope(host) };
+    })),
+  };
 }
 
 export interface NewDevicePairing {
@@ -233,7 +248,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       if (held?.host && held.transfer && options.history && options.historyStore) {
         receiver = createHistoryReceiver({
           store: options.historyStore(held.host, held.transfer),
-          key: held.key, sink: options.history, clock, signal: abort.signal, onProgress: setHistory,
+          key: held.key, sink: refiled(options.history, envelope.servers, options.localScope), clock, signal: abort.signal, onProgress: setHistory,
         });
         receiver.listManifest(held.manifest.chunks);
       } else if (envelope.servers.length > 0) {
