@@ -355,7 +355,7 @@ export interface MlsDmDriver {
   handleDevicesChanged(push: { serverUserId: string }): Promise<void>;
   /** `mls:add:requested`: a device of somebody in the conversation asked to be added. */
   handleAddRequest(push: { conversationId: string; serverUserId: string; deviceId: string }): Promise<void>;
-  /** Asks the other members' apps to add this device, as the driver does when it finds it's out. */
+  /** Rejoins: drops a local copy that can't follow the log and joins again, or asks the others' apps to add this device. */
   requestAdd(conversationId: string): Promise<void>;
   /** Oldest first, as the server lists them. */
   ownDevices(): Promise<MlsOwnDevice[]>;

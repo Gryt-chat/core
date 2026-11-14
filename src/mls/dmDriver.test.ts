@@ -906,6 +906,38 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(mia.texts().includes("kari: tilbake"));
   });
 
+  it("rejoins on request when its copy can't follow the log, without having to send", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "mia");
+    const laptop = device(fake, "kari", "laptop");
+    const mia = device(fake, "mia", "phone");
+    await laptop.driver.start();
+    await mia.driver.start();
+    await laptop.driver.send(dm, "mia", text("hei"));
+    await fake.settle();
+
+    laptop.socket.online = false;
+    for (const name of ["phone", "tablet"]) {
+      const d = device(fake, "kari", name);
+      await d.driver.start();
+      await d.driver.send(dm, "mia", text(`fra ${name}`));
+      await fake.settle();
+    }
+    const rec = laptop.store.groups.get(dm)!;
+    rec.cursor = fake.groups.get(dm)!.log.find((e) => e.seq > rec.cursor && e.kind === "commit")!.seq;
+
+    laptop.socket.online = true;
+    await laptop.driver.start();
+    await fake.settle();
+    assert.ok(laptop.lost.some((l) => l.reason === "out_of_sync"));
+
+    await laptop.driver.requestAdd(dm);
+    await fake.settle();
+    await mia.driver.send(dm, "kari", text("ser du dette?"));
+    await fake.settle();
+    assert.ok(laptop.texts().includes("mia: ser du dette?"));
+  });
+
   it("lets a device back in after the server expired it, once it registers again (GRYT-1872)", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "mia");
