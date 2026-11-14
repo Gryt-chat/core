@@ -1143,7 +1143,17 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     handleWelcome,
     handleDevicesChanged,
     handleAddRequest,
-    requestAdd: (conversationId) => askToBeAdded(conversationId, true),
+    async requestAdd(conversationId) {
+      // Same as a send: a copy that can't follow the log is dropped, so this device joins again.
+      const stale = await run(conversationId, async () => {
+        const open = await load(conversationId);
+        if (!open || left.has(conversationId) || (await catchUp(open))) return false;
+        await store.deleteGroup(conversationId);
+        return true;
+      });
+      if (stale && (await joinByItself(conversationId))) return;
+      await askToBeAdded(conversationId, true);
+    },
     ownDevices,
     diagnose,
     async removeOwnDevice(deviceId: string) {
