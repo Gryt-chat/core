@@ -9,6 +9,8 @@ const REQUIRED = [
   "readImportBundle",
   "reencryptMine",
   "reencryptedId",
+  // qr
+  "qrArt",
   // reports
   "MESSAGE_MAX",
   "TITLE_MAX",

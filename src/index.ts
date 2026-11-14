@@ -211,3 +211,5 @@ export type {
   PairingStorage,
   PairingTokens,
 } from "./pairing/interfaces.js";
+
+export { qrArt, type QrArt } from "./qr/qrArt.js";
