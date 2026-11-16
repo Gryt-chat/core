@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   asIdentityScope,
+  base64Url,
   createMlsDevice,
   decodeMlsGroupState,
   derivePersonKeyPair,
@@ -91,7 +92,7 @@ function device(fake: FakeDeliveryService, who: string, name: string, opts: Devi
   });
   socket.driver = driver;
   const texts = () => messages.map((m) => `${m.senderServerUserId}: ${new TextDecoder().decode(m.plaintext)}`);
-  return { driver, store, messages, lost, undecryptable, removed, waiting, seen, socket, texts, pinPerson: pins.pinPerson };
+  return { driver, store, messages, lost, undecryptable, removed, waiting, seen, socket, texts, pinPerson: pins.pinPerson, pins: pins.store };
 }
 
 /* A package for `d` made as if the clock said `at`, put first in line for its device. */
@@ -1036,3 +1037,42 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(mia.texts().includes("kari: via a request"));
   });
 });
+
+describe("MLS DM driver, a device linked to another identity", () => {
+  it("leaves its old device behind and sends as the new one", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "mia");
+    const own = seedOf(11);
+    const kept = new MemoryMlsStore();
+    const before = device(fake, "kari", "windows", { seed: own, store: kept });
+    const mia = device(fake, "mia", "phone");
+    const pinKari = (seed: Uint8Array) => {
+      const pins = mia.pins.read();
+      pins[Object.keys(pins).find((k) => k.endsWith(" kari"))!].personPublicKey = base64Url(derivePersonKeyPair(seed, SCOPE).publicKey);
+      mia.pins.write(pins);
+    };
+    pinKari(own);
+    await before.driver.start();
+    await mia.driver.start();
+    await before.driver.send(dm, "mia", text("før"));
+    await fake.settle();
+    const oldDevice = kept.device!.deviceId;
+
+    // Linking swaps the seed; Mia accepts the account's key, and the app restarts on the same store.
+    before.driver.stop();
+    before.socket.online = false;
+    pinKari(SEEDS.kari);
+    const after = device(fake, "kari", "windows", { store: kept });
+    await after.driver.start();
+    await after.driver.send(dm, "mia", text("etter"));
+    await fake.settle();
+
+    assert.ok(mia.texts().includes("kari: etter"));
+    assert.notEqual(kept.device!.deviceId, oldDevice);
+    assert.ok(!(fake.devices.get("kari") ?? []).includes(oldDevice), "the old device is gone from the server");
+    await mia.driver.send(dm, "kari", text("svar"));
+    await fake.settle();
+    assert.ok(after.texts().includes("mia: svar"));
+  });
+});
+

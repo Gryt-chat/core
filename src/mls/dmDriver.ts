@@ -246,15 +246,36 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   const gaveUpError = () => new MlsDriverError("offline", "The server didn't answer in time, so the message wasn't sent.");
   const stoppedError = () => new MlsDriverError("stopped", "This connection has closed.");
 
+  let loadingDevice: Promise<MlsDeviceRecord> | null = null;
   async function ownDevice(): Promise<MlsDeviceRecord> {
     if (device) return device;
-    let d = await store.loadDevice();
-    if (!d) {
-      d = await options.newDevice();
-      await store.saveDevice(d);
-    }
-    device = d;
-    return d;
+    loadingDevice ??= (async () => {
+      let d = await store.loadDevice();
+      if (!d) {
+        d = await options.newDevice();
+        await store.saveDevice(d);
+      } else {
+        d = await replaceIfOtherPerson(d);
+      }
+      return (device = d);
+    })().finally(() => (loadingDevice = null));
+    return loadingDevice;
+  }
+
+  /* Linking swaps the seed, so a device made before it is certified by a person nobody pins.
+     A leaf can't be re-certified: the old device leaves the server and its groups for a new one. */
+  async function replaceIfOtherPerson(d: MlsDeviceRecord): Promise<MlsDeviceRecord> {
+    if (!capability) return d;
+    const fresh = await options.newDevice();
+    const personOf = (r: MlsDeviceRecord) => readDeviceCertificate(r.certificate, scope).personPublicKey;
+    if (sameBytes(personOf(d), personOf(fresh))) return d;
+    // Raw, so the old device's removal isn't taken for this one's.
+    const r = await raw.removeDevice({ deviceId: d.deviceId });
+    if (!r.ok && r.error !== "unknown_device" && r.error !== "device_removed") throw refused("Removing the old device", r);
+    for (const g of await store.listGroups()) await store.deleteGroup(g.conversationId);
+    for (const k of await store.listKeyPackages()) await store.deleteKeyPackage(k.ref);
+    await store.saveDevice(fresh);
+    return fresh;
   }
 
   async function markSeen(serverUserId: string): Promise<void> {
@@ -267,6 +288,13 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
   async function peopleIn(conversationId: string, state: MlsGroupState): Promise<(string | null)[]> {
     const members = mlsGroupMembers(state, scope);
     return Promise.all(members.map((m) => pins.personOf(conversationId, m.certificate.personPublicKey)));
+  }
+
+  /* The other person by their leaves, else whoever the push names: a peer whose every leaf is
+     under a key they no longer have would otherwise never be reconciled out of it. */
+  async function peerIn(conversationId: string, state: MlsGroupState, pushedBy: string): Promise<string | undefined> {
+    const byLeaf = (await peopleIn(conversationId, state)).find((p): p is string => !!p && p !== self);
+    return byLeaf ?? (pushedBy !== self ? pushedBy : undefined);
   }
 
   async function notePeople(conversationId: string, state: MlsGroupState): Promise<void> {
@@ -939,8 +967,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       await run(rec.conversationId, async () => {
         const open = await load(rec.conversationId);
         if (!open) return;
-        const people = await peopleIn(rec.conversationId, open.state);
-        const peer = people.find((p): p is string => !!p && p !== self);
+        const peer = await peerIn(rec.conversationId, open.state, push.serverUserId);
         if (!peer || (push.serverUserId !== self && push.serverUserId !== peer)) return;
         if (await catchUp(open)) await reconcile(open, peer, false);
       });
@@ -953,7 +980,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     await run(push.conversationId, async () => {
       const open = await load(push.conversationId);
       if (!open || !(await catchUp(open))) return;
-      const peer = (await peopleIn(push.conversationId, open.state)).find((p): p is string => !!p && p !== self);
+      const peer = await peerIn(push.conversationId, open.state, push.serverUserId);
       if (!peer || (push.serverUserId !== self && push.serverUserId !== peer)) return;
       await reconcile(open, peer, true);
     });
