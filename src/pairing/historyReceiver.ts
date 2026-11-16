@@ -6,7 +6,8 @@ import type { HistoryProgress, HistorySink, PairingClock } from "./interfaces.js
 import type { HistoryChunkStore } from "./historyStore.js";
 import { HistoryStoreError } from "./historyStore.ts";
 
-const MAX_NETWORK_RETRIES = 5;
+/** Long enough for a server to restart in the middle of a link. */
+const NETWORK_PATIENCE_MS = 3 * 60_000;
 
 export interface HistoryReceiverOptions {
   store: HistoryChunkStore;
@@ -50,13 +51,14 @@ export function createHistoryReceiver(options: HistoryReceiverOptions) {
   }
 
   async function fetchChunk(n: number): Promise<Uint8Array | "missing"> {
-    for (let failures = 0; ; ) {
+    const start = clock.now();
+    for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
       try {
         return await store.get(n, signal);
       } catch (e) {
         if (e instanceof HistoryStoreError && e.code === "missing") return "missing";
-        if (!(e instanceof HistoryStoreError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
-        await clock.sleep(2000, signal);
+        if (!(e instanceof HistoryStoreError && e.code === "network") || clock.now() - start > NETWORK_PATIENCE_MS) throw e;
+        await clock.sleep(wait, signal);
       }
     }
   }

@@ -19,7 +19,8 @@ export const HISTORY_ENVELOPE_ENTRIES = 400;
 export const HISTORY_PAGE_ENTRIES = 180;
 /** The relay allows 64 messages a session, both sides together; N and the envelope use five. */
 const HISTORY_MAX_CHUNKS = HISTORY_ENVELOPE_ENTRIES + 40 * HISTORY_PAGE_ENTRIES;
-const MAX_NETWORK_RETRIES = 5;
+/** Long enough for a server to restart in the middle of a link. */
+const NETWORK_PATIENCE_MS = 3 * 60_000;
 
 /** One chunk as a history message lists it: its relay slot and its manifest entry. */
 export interface ListedChunk extends HistoryChunkEntry {
@@ -68,12 +69,13 @@ export function createHistorySender(options: HistorySenderOptions) {
   const report = () => options.onProgress({ ...progress });
 
   async function put(n: number, sealed: Uint8Array) {
-    for (let failures = 0; ; ) {
+    const start = clock.now();
+    for (let wait = 2000; ; wait = Math.min(wait * 2, 15_000)) {
       try {
         return await store.put(n, sealed, signal);
       } catch (e) {
-        if (!(e instanceof HistoryStoreError && e.code === "network") || ++failures > MAX_NETWORK_RETRIES) throw e;
-        await clock.sleep(2000, signal);
+        if (!(e instanceof HistoryStoreError && e.code === "network") || clock.now() - start > NETWORK_PATIENCE_MS) throw e;
+        await clock.sleep(wait, signal);
       }
     }
   }

@@ -44,7 +44,7 @@ export type NewDeviceState =
   | { phase: "joining"; servers: PairingServer[]; from: string }
   | { phase: "linked"; from: string }
   | { phase: "done"; from: string }
-  | { phase: "ended"; reason: PairingEndReason };
+  | { phase: "ended"; reason: PairingEndReason; detail?: string };
 
 export interface NewDeviceOptions {
   relay: PairingRelay;
@@ -121,9 +121,9 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     for (const l of listeners) l(state);
   };
   const closeQuietly = () => (current ? relay.close(current.id, current.token).catch(() => undefined) : undefined);
-  const end = async (reason: PairingEndReason) => {
+  const end = async (reason: PairingEndReason, detail?: string) => {
     if (state.phase === "ended" || state.phase === "done") return;
-    set({ phase: "ended", reason });
+    set(detail ? { phase: "ended", reason, detail } : { phase: "ended", reason });
     abort.abort();
     current?.session?.close();
     await closeQuietly();
@@ -266,8 +266,8 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
     const stop = new AbortController();
     const onAbort = () => stop.abort();
     abort.signal.addEventListener("abort", onAbort, { once: true });
-    let failed = false;
-    receiver?.done.then(onAbort, () => ((failed = true), onAbort()));
+    let failed: unknown = null;
+    receiver?.done.then(onAbort, (e: unknown) => ((failed = e ?? new Error("History stopped.")), onAbort()));
     try {
       for (;;) {
         const body = openJson(session, await box.next(stop.signal), "history");
@@ -277,7 +277,7 @@ export function createNewDevicePairing(options: NewDeviceOptions): NewDevicePair
       }
     } catch (e) {
       if (abort.signal.aborted) return;
-      if (failed) return end("history_failed");
+      if (failed) return end("history_failed", failed instanceof Error ? failed.message : String(failed));
       if (stop.signal.aborted) {
         set({ phase: "done", from });
         session?.close();
