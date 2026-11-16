@@ -213,3 +213,4 @@ export type {
 } from "./pairing/interfaces.js";
 
 export { qrArt, type QrArt } from "./qr/qrArt.js";
+export { foreignKeyDay, keyBookId, type KeyBookEntry } from "./account/keyBook.js";
