@@ -522,18 +522,22 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     if (!listed.some((x) => x.serverUserId === self && x.deviceId === d.deviceId)) return;
     const treeIds = (s: MlsGroupState) => new Set(mlsGroupMembers(s, scope).map((m) => m.certificate.deviceId));
 
-    // Gone from the server, or still listed under a key that isn't that person's any more: an old device of theirs.
     const ownerOf = (id: string) => listed.find((x) => x.deviceId === id)?.serverUserId;
-    await commitWithRetry(open, async (s) => {
-      const gone: string[] = [];
-      for (const m of mlsGroupMembers(s, scope)) {
-        const id = m.certificate.deviceId;
-        if (id === d.deviceId) continue;
-        const owner = ownerOf(id);
-        if (!owner || (await pins.personOf(conversationId, m.certificate.personPublicKey)) !== owner) gone.push(id);
-      }
-      return gone.length ? removeMlsMembers(s, gone, scope) : null;
-    });
+    /* An old device of `whose`: listed under them, on a key that isn't theirs. Only for people whose current
+       key is known (yours always, theirs once a package of theirs checked out), or a pin still loading would evict them. */
+    const removeStale = (whose: ReadonlySet<string>) =>
+      commitWithRetry(open, async (s) => {
+        const gone: string[] = [];
+        for (const m of mlsGroupMembers(s, scope)) {
+          const id = m.certificate.deviceId;
+          const owner = ownerOf(id);
+          if (id === d.deviceId) continue;
+          if (!owner) gone.push(id);
+          else if (whose.has(owner) && (await pins.personOf(conversationId, m.certificate.personPublicKey)) !== owner) gone.push(id);
+        }
+        return gone.length ? removeMlsMembers(s, gone, scope) : null;
+      });
+    await removeStale(new Set([self]));
     if (!adds) return;
 
     const inTree = treeIds(open.state);
@@ -552,6 +556,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
         if (verdict === "ok") verified.push(kp);
         else if (verdict === "unreadable") asking.push({ serverUserId: kp.serverUserId, deviceId: kp.deviceId });
       }
+      if (verified.some((kp) => kp.serverUserId === peer)) await removeStale(new Set([self, peer]));
 
       await commitWithRetry(open, async (s) => {
         const tree = treeIds(s);
