@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const REQUIRED = [
+  // account
+  "foreignKeyDay",
+  "keyBookId",
   "retryLeftOut",
   "encodeImportBundle",
   "readImportBundle",
@@ -110,6 +113,7 @@ const REQUIRED = [
 // Types are erased at runtime, so they are checked against the .d.ts instead.
 const REQUIRED_TYPES = [
   "Diagnostics",
+  "KeyBookEntry",
   "LinkCardLayout",
   "LinkPreviewData",
   "LinkProvider",
