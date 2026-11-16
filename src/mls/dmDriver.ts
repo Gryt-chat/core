@@ -520,7 +520,6 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     if (!r.ok) throw refused("Listing devices", r);
     const listed = r.devices.filter((x) => x.serverUserId === self || x.serverUserId === peer);
     if (!listed.some((x) => x.serverUserId === self && x.deviceId === d.deviceId)) return;
-    const isListed = (id: string) => listed.some((x) => x.deviceId === id);
     const treeIds = (s: MlsGroupState) => new Set(mlsGroupMembers(s, scope).map((m) => m.certificate.deviceId));
 
     // Gone from the server, or still listed under a key that isn't that person's any more: an old device of theirs.
