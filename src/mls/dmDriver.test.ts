@@ -408,6 +408,33 @@ describe("MLS DM driver", () => {
     assert.deepEqual(mia.texts(), ["kari: first", "kari: second"]);
   });
 
+  it("takes out a device still on someone's old key once their new key is pinned, and the DM carries on", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "mia");
+    const kari = device(fake, "kari", "laptop");
+    const oldMia = device(fake, "mia", "old phone");
+    await kari.driver.start();
+    await oldMia.driver.start();
+    await kari.driver.send(dm, "mia", text("first"));
+    await fake.settle();
+
+    // Mia's devices now share her account key, and Kari compared codes for it.
+    const accountSeed = seedOf(11);
+    const newMia = device(fake, "mia", "new laptop", { seed: accountSeed });
+    await newMia.driver.start();
+    const pins = kari.pins.read();
+    for (const k of Object.keys(pins)) if (k.endsWith(" mia")) delete pins[k];
+    kari.pins.write(pins);
+    pinPeerKey(kari.pins, SCOPE, "mia", { dmPublicKey: new Uint8Array(32).fill(1), identityThumbprint: "id-mia-new" } as VerifiedDmKeyBinding);
+    pinPersonKey(kari.pins, SCOPE, "mia", { personPublicKey: derivePersonKeyPair(accountSeed, SCOPE).publicKey, identityThumbprint: "id-mia-new", scope: SCOPE, signedAt: 1 } as VerifiedPersonKeyBinding);
+    await fake.settle();
+
+    await kari.driver.send(dm, "mia", text("second"));
+    await fake.settle();
+    assert.deepEqual(newMia.texts(), ["kari: second"]);
+    assert.deepEqual(oldMia.texts(), ["kari: first"], "the old key reads nothing new");
+  });
+
   it("claims again for a device whose package won't read", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "mia");

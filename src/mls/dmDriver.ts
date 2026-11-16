@@ -523,8 +523,16 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     const isListed = (id: string) => listed.some((x) => x.deviceId === id);
     const treeIds = (s: MlsGroupState) => new Set(mlsGroupMembers(s, scope).map((m) => m.certificate.deviceId));
 
+    // Gone from the server, or still listed under a key that isn't that person's any more: an old device of theirs.
+    const ownerOf = (id: string) => listed.find((x) => x.deviceId === id)?.serverUserId;
     await commitWithRetry(open, async (s) => {
-      const gone = [...treeIds(s)].filter((id) => id !== d.deviceId && !isListed(id));
+      const gone: string[] = [];
+      for (const m of mlsGroupMembers(s, scope)) {
+        const id = m.certificate.deviceId;
+        if (id === d.deviceId) continue;
+        const owner = ownerOf(id);
+        if (!owner || (await pins.personOf(conversationId, m.certificate.personPublicKey)) !== owner) gone.push(id);
+      }
       return gone.length ? removeMlsMembers(s, gone, scope) : null;
     });
     if (!adds) return;
