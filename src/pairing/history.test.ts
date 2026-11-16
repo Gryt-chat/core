@@ -19,6 +19,8 @@ class FakeHistoryServer {
   chunks = new Map<number, Uint8Array>();
   bytes = 0;
   serveChunk: ((n: number, body: Uint8Array) => Uint8Array | null) | null = null;
+  /** True while the server is down, as in a restart. */
+  down: (() => boolean) | null = null;
   store(): HistoryChunkStore {
     return {
       put: async (n, sealed) => {
@@ -26,6 +28,7 @@ class FakeHistoryServer {
         this.bytes += sealed.length;
       },
       get: async (n) => {
+        if (this.down?.()) throw new HistoryStoreError("network");
         const stored = this.chunks.get(n);
         const served = stored && (this.serveChunk ? this.serveChunk(n, stored) : stored);
         if (!served) throw new HistoryStoreError("missing");
@@ -275,6 +278,29 @@ describe("history transfer", () => {
     assert.equal(p.complete, true);
     assert.ok(env.sink.length < records.length && env.sink.length > records.length - 1000);
     assert.equal(new Set(env.sink.map(key)).size, env.sink.length);
+  });
+
+  it("waits out a server restart in the middle of the download", async () => {
+    const records = bigArchive();
+    const env = setup(records);
+    let upAt = 0;
+    const { n, a } = await env.pair(() => {
+      upAt = env.clock.now() + 90_000;
+      env.server.down = () => env.clock.now() < upAt;
+    });
+    await env.until(() => phase(a) === "done" && phase(n) === "done");
+    assert.equal(progressOf(n).complete, true);
+    assert.equal(env.sink.length, records.length);
+  });
+
+  it("says why when the history can't be fetched", async () => {
+    const env = setup(bigArchive());
+    const { n } = await env.pair(() => {
+      env.server.down = () => true;
+    });
+    await env.until(() => phase(n) === "ended");
+    assert.equal((n.state as { reason: string }).reason, "history_failed");
+    assert.ok((n.state as { detail?: string }).detail, "the reason travels with the end");
   });
 
   it("reports a chunk the server lost", async () => {
