@@ -313,6 +313,8 @@ export interface MlsDmDriverOptions {
   capability: MlsServerCapability | null;
   /** The first time only: `createMlsDevice` from @gryt/crypto, so the seed stays in the app. */
   newDevice(): MlsDeviceRecord | Promise<MlsDeviceRecord>;
+  /** This seed's person key here. Given, a stored device that matches it is kept without making a new one to compare. */
+  ownPersonKey?: Uint8Array;
   /** How long a send waits for the server before it fails with `offline`. Five minutes. */
   sendGiveUpMs?: number;
   /** How long a send waits for this device to be added to a group that exists. Ten seconds. */
