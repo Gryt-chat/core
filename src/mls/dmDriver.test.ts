@@ -52,6 +52,8 @@ type DeviceOptions = {
   unpinned?: string[];
   store?: MemoryMlsStore;
   sendGiveUpMs?: number;
+  /** Names of the devices `newDevice` was asked for. */
+  made?: string[];
 };
 
 function device(fake: FakeDeliveryService, who: string, name: string, opts: DeviceOptions = {}) {
@@ -87,7 +89,11 @@ function device(fake: FakeDeliveryService, who: string, name: string, opts: Devi
       onDeviceRemoved: () => void removed.push(Date.now()),
       onWaiting: (w) => void waiting.push(w),
     },
-    newDevice: () => createMlsDevice({ seed, scope: SCOPE, deviceName: name }),
+    newDevice: () => {
+      opts.made?.push(name);
+      return createMlsDevice({ seed, scope: SCOPE, deviceName: name });
+    },
+    ownPersonKey: derivePersonKeyPair(seed, SCOPE).publicKey,
     sendGiveUpMs: opts.sendGiveUpMs,
   });
   socket.driver = driver;
@@ -1066,6 +1072,22 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
 });
 
 describe("MLS DM driver, a device linked to another identity", () => {
+  it("keeps a stored device on restart without making one to compare", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const kept = new MemoryMlsStore();
+    const first = device(fake, "kari", "phone", { store: kept });
+    await first.driver.start();
+    const id = kept.device!.deviceId;
+    first.driver.stop();
+    first.socket.online = false;
+
+    const made: string[] = [];
+    const again = device(fake, "kari", "phone", { store: kept, made });
+    await again.driver.start();
+    assert.equal(kept.device!.deviceId, id);
+    assert.deepEqual(made, []);
+  });
+
   it("leaves its old device behind and sends as the new one", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "mia");

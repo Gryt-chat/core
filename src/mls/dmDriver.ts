@@ -266,9 +266,11 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
      A leaf can't be re-certified: the old device leaves the server and its groups for a new one. */
   async function replaceIfOtherPerson(d: MlsDeviceRecord): Promise<MlsDeviceRecord> {
     if (!capability) return d;
-    const fresh = await options.newDevice();
     const personOf = (r: MlsDeviceRecord) => readDeviceCertificate(r.certificate, scope).personPublicKey;
-    if (sameBytes(personOf(d), personOf(fresh))) return d;
+    const stored = personOf(d);
+    if (options.ownPersonKey && sameBytes(stored, options.ownPersonKey)) return d;
+    const fresh = await options.newDevice();
+    if (sameBytes(stored, personOf(fresh))) return d;
     // Raw, so the old device's removal isn't taken for this one's.
     const r = await raw.removeDevice({ deviceId: d.deviceId });
     if (!r.ok && r.error !== "unknown_device" && r.error !== "device_removed") throw refused("Removing the old device", r);
