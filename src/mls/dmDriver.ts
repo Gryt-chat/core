@@ -682,18 +682,17 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     });
   }
 
-  /* Every device in the group is gone, so nobody can add anyone and nobody can join by itself:
-     this device starts a new group in its place. Others who held the old one follow it (core#48). */
+  /* Nobody left in the group can add anyone, so this device starts a new one; others follow (core#48).
+     With no GroupInfo (a group from before GRYT-1859) the server decides from dates (GRYT-2138). */
   async function rebuild(conversationId: string): Promise<boolean> {
     const replace = transport.replaceGroup;
-    if (!replace || !transport.getGroupInfo) return false;
+    if (!replace) return false;
     const d = await ownDevice();
-    const got = await transport.getGroupInfo({ conversationId, deviceId: d.deviceId }).catch(() => null);
-    const listed = got?.ok ? await transport.listDevices({ conversationId }) : null;
-    const log = listed?.ok ? await transport.fetchLog({ conversationId, after: 0, limit: 1 }) : null;
-    if (!got?.ok || !listed?.ok || !log?.ok || !log.group) return false;
-    const inGroup = mlsGroupInfoDeviceIds(got.groupInfo, scope);
-    if (inGroup.some((id) => listed.devices.some((x) => x.deviceId === id))) return false;
+    const got = transport.getGroupInfo ? await transport.getGroupInfo({ conversationId, deviceId: d.deviceId }).catch(() => null) : null;
+    const listed = await transport.listDevices({ conversationId });
+    const log = listed.ok ? await transport.fetchLog({ conversationId, after: 0, limit: 1 }) : null;
+    if (!listed.ok || !log?.ok || !log.group) return false;
+    if (got?.ok && mlsGroupInfoDeviceIds(got.groupInfo, scope).some((id) => listed.devices.some((x) => x.deviceId === id))) return false;
     const oldGroupId = log.group.groupId;
     return run(conversationId, async () => {
       if (await store.loadGroup(conversationId)) return true;
