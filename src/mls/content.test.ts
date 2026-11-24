@@ -6,6 +6,7 @@ import { sealAttachment } from "@gryt/crypto";
 import {
   acceptImport,
   decodeMlsDmContent,
+  dmNotificationLine,
   encodeMlsDmContent,
   historyBatches,
   importBatches,
@@ -259,5 +260,25 @@ describe("an import from your own Discord data (GRYT-1965)", () => {
     const ids = batches.flatMap((b) => b.entries.map((e) => e.id));
     assert.equal(ids.length, 30);
     assert.equal(ids[0], "d1", "oldest first");
+  });
+});
+
+describe("a DM's notification line (GRYT-2275)", () => {
+  const file = (mime: string) => sealAttachment({ bytes: new Uint8Array(1), conversationId: "dm_x", name: "f", mime }).meta;
+
+  it("is the first line with words in it, cut at a hundred characters", () => {
+    assert.equal(dmNotificationLine({ type: "message", id: "1", text: "\n  hei der  \nmore" }), "hei der");
+    const long = "😀".repeat(150);
+    const line = dmNotificationLine({ type: "message", id: "1", text: long }) ?? "";
+    assert.equal(Array.from(line).length, 100);
+    assert.ok(line.endsWith("…") && !line.includes("\uFFFD"));
+  });
+
+  it("names pictures and files when there's no text, and nothing for the rest", () => {
+    assert.equal(dmNotificationLine({ type: "message", id: "1", text: "", attachments: { a: file("image/png") } }), "Sent a picture");
+    assert.equal(dmNotificationLine({ type: "message", id: "1", text: "", attachments: { a: file("image/png"), b: file("application/pdf") } }), "Sent 2 files");
+    assert.equal(dmNotificationLine({ type: "message", id: "1", text: "  " }), null);
+    assert.equal(dmNotificationLine({ type: "reaction", id: "1", emoji: "👍", action: "add" }), null);
+    assert.equal(dmNotificationLine({ type: "edit", id: "1", text: "x" }), null);
   });
 });
