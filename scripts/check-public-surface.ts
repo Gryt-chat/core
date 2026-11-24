@@ -77,6 +77,7 @@ const REQUIRED = [
   "MlsDriverError",
   "mlsPinsFromPeerPins",
   "decodeMlsDmContent",
+  "dmNotificationLine",
   "historyBatches",
   "importBatches",
   "acceptImport",
