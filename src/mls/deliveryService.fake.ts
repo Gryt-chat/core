@@ -345,7 +345,12 @@ export class FakeDeliveryService {
         const g = this.groups.get(conversationId);
         if (!g || g.groupId !== oldGroupId) return fail("stale_group", "That isn't this conversation's group anymore.");
         const listed = new Set(this.devicesOf(this.conversations.get(conversationId)!).map((d) => d.deviceId));
-        if (!g.info || mlsGroupInfoDeviceIds(g.info.data, this.scope).some((id) => listed.has(id))) {
+        // Without GroupInfo, as the server: abandoned when every listed device came after the group's last entry.
+        const headAt = g.log.find((e) => e.seq === g.headSeq)?.createdAt;
+        const abandoned = g.info
+          ? !mlsGroupInfoDeviceIds(g.info.data, this.scope).some((id) => listed.has(id))
+          : !!headAt && [...listed].every((id) => (this.deviceAddedAt.get(id) ?? "") > headAt);
+        if (!abandoned) {
           return fail("not_abandoned", "Somebody in this group can still add devices.");
         }
         const fresh: GroupRow = { conversationId, groupId, epoch: 0, headSeq: 0, log: [] };

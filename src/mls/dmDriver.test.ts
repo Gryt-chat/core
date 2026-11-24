@@ -1052,6 +1052,33 @@ describe("MLS DM driver, joining by itself (GRYT-1859)", () => {
     assert.ok(laptop.texts().includes("mia: ny start"));
   });
 
+  it("starts over a group with no GroupInfo once every listed device came after it (GRYT-2138)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "mia");
+    const phone = device(fake, "kari", "phone");
+    const mia = device(fake, "mia", "phone");
+    await phone.driver.start();
+    await mia.driver.start();
+    await phone.driver.send(dm, "mia", text("hei"));
+    await fake.settle();
+    fake.groups.get(dm)!.info = undefined;
+    phone.socket.online = false;
+    mia.socket.online = false;
+    fake.expire("kari", phone.store.device!.deviceId);
+    fake.expire("mia", mia.store.device!.deviceId);
+    const before = fake.groups.get(dm)!.groupId;
+    await new Promise((r) => setTimeout(r, 5));
+
+    const tablet = device(fake, "mia", "tablet");
+    const laptop = device(fake, "kari", "laptop");
+    await tablet.driver.start();
+    await laptop.driver.start();
+    await tablet.driver.send(dm, "kari", text("ny start"));
+    await fake.settle();
+    assert.notEqual(fake.groups.get(dm)!.groupId, before, "a new group took the old one's place");
+    assert.ok(laptop.texts().includes("mia: ny start"));
+  });
+
   it("asks to be added when there's no GroupInfo to join from", async () => {
     const fake = new FakeDeliveryService(SCOPE);
     const dm = fake.dm("kari", "mia");
