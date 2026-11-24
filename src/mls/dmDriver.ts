@@ -19,6 +19,9 @@ import {
   readDeviceCertificate,
   readMlsKeyPackage,
   removeMlsMembers,
+  sealDmPreview,
+  verifyDmPreviewKey,
+  type DmPreview,
   type DeviceCertificate,
   type MlsCommit,
   type MlsGroupState,
@@ -115,6 +118,7 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 const epochOf = (state: MlsGroupState) => Number(mlsGroupInfo(state).epoch);
+const MAX_PREVIEW_PHONES = 20;
 const groupIdOf = (state: MlsGroupState) => toHex(base64UrlDecode(mlsGroupInfo(state).groupId));
 
 /* One job at a time per key, in the order they were asked for. A job must never wait on
@@ -215,6 +219,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     conversationId: string;
     message: Uint8Array | null;
     seq: number | null;
+    previews?: { deviceId: string; blob: string }[];
   }
   const flights = new Set<Flight>();
   let waitingForServer = false;
@@ -865,7 +870,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     conversationId: string,
     peer: string,
     plaintext: Uint8Array,
-    options: { attachmentIds?: readonly string[] } = {},
+    options: { attachmentIds?: readonly string[]; preview?: DmPreview } = {},
   ): Promise<{ seq: number }> {
     const attachmentIds: string[] | undefined = options.attachmentIds?.length ? [...options.attachmentIds] : undefined;
     if (attachmentIds && attachmentIds.length > MAX_ATTACHMENT_IDS) {
@@ -880,7 +885,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
     try {
       for (;;) {
         try {
-          return await sendOnce(flight, peer, plaintext, attachmentIds);
+          return await sendOnce(flight, peer, plaintext, attachmentIds, options.preview);
         } catch (e) {
           if (e instanceof MlsDriverError && e.code === "not_in_group" && !rejoined && !left.has(conversationId)) {
             rejoined = true;
@@ -900,7 +905,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
 
   /* Encrypted at most once, and only once the group is caught up. Every later attempt sends
      the same bytes, which the server takes as a repeat rather than a second message. */
-  async function sendOnce(flight: Flight, peer: string, plaintext: Uint8Array, attachmentIds?: string[]): Promise<{ seq: number }> {
+  async function sendOnce(flight: Flight, peer: string, plaintext: Uint8Array, attachmentIds?: string[], preview?: DmPreview): Promise<{ seq: number }> {
     const { conversationId } = flight;
     if (!flight.message) await ensureOpen(conversationId);
     return run(conversationId, async () => {
@@ -913,7 +918,7 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       }
       if (flight.seq !== null) return { seq: flight.seq };
       if (flight.message) {
-        const r = await transport.send({ conversationId, deviceId: d.deviceId, message: flight.message, attachmentIds });
+        const r = await transport.send({ conversationId, deviceId: d.deviceId, message: flight.message, attachmentIds, previews: flight.previews });
         if (!r.ok) throw refused("Sending", r);
         return { seq: r.seq };
       }
@@ -932,10 +937,31 @@ export function createMlsDmDriver(options: MlsDmDriverOptions): MlsDmDriver {
       // The generation is used up whether or not the send arrives, so the state is saved first.
       await save(open);
       flight.message = out.message;
-      const r = await transport.send({ conversationId, deviceId: d.deviceId, message: out.message, attachmentIds });
+      flight.previews = preview ? await sealPreviews(conversationId, open.state, d.deviceId, preview) : undefined;
+      const r = await transport.send({ conversationId, deviceId: d.deviceId, message: out.message, attachmentIds, previews: flight.previews });
       if (!r.ok) throw refused("Sending", r);
       return { seq: r.seq };
     });
+  }
+
+  /* Only to a phone whose preview key its own leaf signed, so the server can't slip in a key of its own.
+     Past MAX_PREVIEW_PHONES the rest get the server's "New direct message". */
+  async function sealPreviews(conversationId: string, state: MlsGroupState, own: string, preview: DmPreview) {
+    const listed = await transport.listDevices({ conversationId }).catch(() => null);
+    if (!listed?.ok) return undefined;
+    const leaves = new Map(mlsGroupMembers(state, scope).map((m) => [m.certificate.deviceId, m.certificate.leafSignatureKey]));
+    const out: { deviceId: string; blob: string }[] = [];
+    for (const dev of listed.devices) {
+      const leaf = leaves.get(dev.deviceId);
+      if (dev.deviceId === own || !leaf || !dev.dmPreviewKey || !dev.dmPreviewSig || out.length >= MAX_PREVIEW_PHONES) continue;
+      try {
+        const key = base64UrlDecode(dev.dmPreviewKey);
+        if (verifyDmPreviewKey(leaf, dev.deviceId, key, dev.dmPreviewSig)) out.push({ deviceId: dev.deviceId, blob: sealDmPreview(key, dev.deviceId, preview) });
+      } catch {
+        // A malformed key is just a phone without a line.
+      }
+    }
+    return out.length ? out : undefined;
   }
 
   async function modeFor(conversationId: string, peer: string): Promise<DmSealingMode> {

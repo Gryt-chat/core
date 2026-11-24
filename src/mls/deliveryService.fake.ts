@@ -84,6 +84,10 @@ export class FakeDeliveryService {
   syncWelcomeLimit = Infinity;
   /** What each `mls:send` said it carried, by seq. */
   attachmentIds = new Map<number, string[] | undefined>();
+  /** A phone's DM preview key, as `push:register` left it (GRYT-2275). */
+  dmPreviewKeys = new Map<string, { key: string; sig: string }>();
+  /** What each `mls:send` carried for the phones, by seq. */
+  previews = new Map<number, { deviceId: string; blob: string }[] | undefined>();
   private inFlight = new Set<Promise<unknown>>();
   private held: { count: number; waiting: (() => void)[] } | null = null;
   private nextWelcome = 1;
@@ -228,7 +232,11 @@ export class FakeDeliveryService {
           return { ok: true, devices };
         }
         if (!member(conversationId)) return fail("not_found", "No such conversation.");
-        return { ok: true, devices: this.devicesOf(this.conversations.get(conversationId)!) };
+        const devices = this.devicesOf(this.conversations.get(conversationId)!).map((d) => {
+          const p = this.dmPreviewKeys.get(d.deviceId);
+          return p ? { ...d, dmPreviewKey: p.key, dmPreviewSig: p.sig } : d;
+        });
+        return { ok: true, devices };
       },
 
       removeDevice: async ({ deviceId }) => {
@@ -270,7 +278,7 @@ export class FakeDeliveryService {
         return this.commit(me, conversationId, deviceId, commit, welcome);
       },
 
-      send: async ({ conversationId, deviceId, message, attachmentIds }) => {
+      send: async ({ conversationId, deviceId, message, attachmentIds, previews }) => {
         await tick();
         if (!member(conversationId)) return fail("not_found", "No such conversation.");
         const g = this.groups.get(conversationId);
@@ -285,6 +293,7 @@ export class FakeDeliveryService {
         const kind = info.contentType === "application" ? "application" : "proposal";
         const entry = this.append(g, kind, epoch, me, deviceId, message);
         this.attachmentIds.set(entry.seq, attachmentIds);
+        this.previews.set(entry.seq, previews);
         this.push(this.conversations.get(conversationId)!, (d) => d.handleMessage(entry));
         return { ok: true, seq: entry.seq };
       },

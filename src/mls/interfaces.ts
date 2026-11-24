@@ -1,4 +1,4 @@
-import type { TrustPersonKey } from "@gryt/crypto";
+import type { DmPreview, TrustPersonKey } from "@gryt/crypto";
 
 /* What each app implements for the MLS DM driver: the socket, the storage and the pins.
    Shapes follow the mls:* events in Gryt-chat/server#241. Bytes are always Uint8Array. */
@@ -26,6 +26,9 @@ export interface MlsListedDevice extends MlsDeviceRef {
   lastSeenAt?: string;
   /** On your own list: the device's last-resort KeyPackage, whose certificate names it (GRYT-1764). */
   lastResortKeyPackage?: Uint8Array | ArrayBuffer | null;
+  /** The phone's DM preview key and its device's signature over it, for sealing a notification line (GRYT-2275). */
+  dmPreviewKey?: string;
+  dmPreviewSig?: string;
 }
 
 /** The server's view of a group. `groupId` is lower-case hex. */
@@ -103,6 +106,8 @@ export interface MlsTransport {
     deviceId: string;
     message: Uint8Array;
     attachmentIds?: string[];
+    /** A notification line per recipient phone, sealed to that phone's own key. An old server ignores it. */
+    previews?: { deviceId: string; blob: string }[];
   }): Promise<MlsReply<{ seq: number }>>;
 
   fetchLog(req: { conversationId: string; after: number; limit?: number }): Promise<
@@ -350,7 +355,7 @@ export interface MlsDmDriver {
     conversationId: string,
     peerServerUserId: string,
     plaintext: Uint8Array,
-    options?: { attachmentIds?: readonly string[] },
+    options?: { attachmentIds?: readonly string[]; preview?: DmPreview },
   ): Promise<{ seq: number }>;
   handleMessage(entry: MlsLogEntry): Promise<void>;
   handleWelcome(welcome: MlsWelcomeDelivery): Promise<void>;
