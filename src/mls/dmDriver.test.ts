@@ -7,10 +7,13 @@ import {
   createMlsDevice,
   decodeMlsGroupState,
   derivePersonKeyPair,
+  generateDmPreviewKeyPair,
   generateMlsKeyPackage,
   mlsGroupMembers,
   openAttachment,
+  openDmPreview,
   sealAttachment,
+  signDmPreviewKey,
   pinPeerKey,
   pinPersonKey,
   readMlsKeyPackage,
@@ -597,6 +600,33 @@ describe("MLS DM driver", () => {
 
     const eleven = Array.from({ length: 11 }, (_, i) => `u${i}`);
     await assert.rejects(kari.driver.send(dm, "mia", content, { attachmentIds: eleven }), (e: unknown) => e instanceof MlsDriverError && e.code === "too_many_attachments");
+  });
+
+  it("seals the notification line to each of their phones whose own device signed its key (GRYT-2275)", async () => {
+    const fake = new FakeDeliveryService(SCOPE);
+    const dm = fake.dm("kari", "mia");
+    const kari = device(fake, "kari", "laptop");
+    const phone = device(fake, "mia", "phone");
+    const tablet = device(fake, "mia", "tablet");
+    await kari.driver.start();
+    await phone.driver.start();
+    await tablet.driver.start();
+    const phoneKey = generateDmPreviewKeyPair();
+    const { deviceId, signKey } = phone.store.device!;
+    fake.dmPreviewKeys.set(deviceId, { key: base64Url(phoneKey.publicKey), sig: signDmPreviewKey(signKey, deviceId, phoneKey.publicKey) });
+    // A key the server made up for the tablet, signed by nothing the tablet holds.
+    const forged = generateDmPreviewKeyPair();
+    const tabletId = tablet.store.device!.deviceId;
+    fake.dmPreviewKeys.set(tabletId, { key: base64Url(forged.publicKey), sig: signDmPreviewKey(generateDmPreviewKeyPair().privateKey, tabletId, forged.publicKey) });
+
+    const line = { t: "kari", b: "hei" };
+    const { seq } = await kari.driver.send(dm, "mia", encodeMlsDmContent({ type: "message", id: "m-1", text: "hei" }), { preview: line });
+    const sent = fake.previews.get(seq) ?? [];
+    assert.deepEqual(sent.map((p) => p.deviceId), [deviceId], "only the phone whose key its own leaf signed");
+    assert.deepEqual(openDmPreview(phoneKey.privateKey, deviceId, sent[0].blob), line);
+
+    const { seq: plain } = await kari.driver.send(dm, "mia", encodeMlsDmContent({ type: "message", id: "m-2", text: "no line" }));
+    assert.equal(fake.previews.get(plain), undefined, "nothing when the app gives no line");
   });
 
   it("keeps syncing while a server hands Welcomes out a few at a time", async () => {

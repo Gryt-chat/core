@@ -76,6 +76,24 @@ export type MlsDmContent =
 
 export const MLS_DM_CONTENT_VERSION = 1;
 
+const LINE_MAX = 100;
+
+/** What a phone's notification says for a DM, or null for content that doesn't notify (GRYT-2275). */
+export function dmNotificationLine(content: MlsDmContent): string | null {
+  if (content.type !== "message") return null;
+  const first = content.text.split("\n").map((s) => s.trim()).find(Boolean);
+  if (first) {
+    // By code point, so an emoji isn't cut in half.
+    const chars = Array.from(first);
+    return chars.length > LINE_MAX ? `${chars.slice(0, LINE_MAX - 1).join("")}…` : first;
+  }
+  const files = Object.values(content.attachments ?? {});
+  if (!files.length) return null;
+  const pictures = files.every((f) => f.mime?.startsWith("image/"));
+  if (files.length === 1) return pictures ? "Sent a picture" : "Sent a file";
+  return pictures ? `Sent ${files.length} pictures` : `Sent ${files.length} files`;
+}
+
 const MAX_ID = 64;
 /** Well past the composer's limit, and under what one `mls:send` can carry. */
 const MAX_TEXT = 32_000;
