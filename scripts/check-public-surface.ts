@@ -48,6 +48,7 @@ const REQUIRED = [
   "scopeSetPayload",
   "withCell",
   // servers
+  "bindChallengeToServer",
   "inviteLink",
   "isPublicHost",
   "normalizeCode",
