@@ -49,6 +49,8 @@ export {
   type ServerInput,
 } from "./servers/address.js";
 
+export { bindChallengeToServer, type ChallengeBinding } from "./servers/joinBinding.js";
+
 export { NAME_POOL, pickRandomName } from "./profile/randomName.js";
 
 export {
